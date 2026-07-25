@@ -131,6 +131,12 @@ gcloud iam service-accounts keys create sa-key.json \
 base64 -w0 sa-key.json      # macOS: base64 -i sa-key.json
 ```
 
+On Windows, `base64` does not exist — use PowerShell instead:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("sa-key.json")) | Set-Clipboard
+```
+
 Paste that string as `GCP_SA_KEY` in the Amplify console, then **delete
 `sa-key.json`** — it is an unexpiring private key and the repo must never see it.
 `roles/aiplatform.user` is the least privilege that can call Vertex models.
