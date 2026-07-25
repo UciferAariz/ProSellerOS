@@ -139,8 +139,13 @@ base64 -w0 sa-key.json      # macOS: base64 -i sa-key.json
 On Windows, `base64` does not exist — use PowerShell instead:
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("sa-key.json")) | Set-Clipboard
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$PWD\sa-key.json")) | Set-Clipboard
+(Get-Clipboard).Length   # sanity check: expect ~900-3000 chars, never 0
 ```
+
+`$PWD` is required, not decoration: PowerShell's `cd` does not change the .NET
+process working directory, so a bare `"sa-key.json"` resolves against the
+directory the shell was launched from and throws `FileNotFoundException`.
 
 Paste that string as `GCP_SA_KEY` in the Amplify console, then **delete
 `sa-key.json`** — it is an unexpiring private key and the repo must never see it.
