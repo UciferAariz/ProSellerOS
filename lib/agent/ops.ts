@@ -589,11 +589,26 @@ const DESTINATIONS: Record<string, { path: string; label: string }> = {
   overview: { path: "/dashboard", label: "the Dashboard" },
   products: { path: "/products", label: "Products" },
   catalog: { path: "/products", label: "Products" },
-  inventory: { path: "/products", label: "Products" },
   orders: { path: "/orders", label: "Orders" },
   marketplaces: { path: "/marketplaces", label: "Marketplaces" },
   channels: { path: "/marketplaces", label: "Marketplaces" },
   assistant: { path: "/assistant", label: "the AI Assistant" },
+  inventory: { path: "/inventory", label: "Inventory" },
+  stock: { path: "/inventory", label: "Inventory" },
+  warehouse: { path: "/inventory", label: "Inventory" },
+  customers: { path: "/customers", label: "Customers" },
+  buyers: { path: "/customers", label: "Customers" },
+  finance: { path: "/finance", label: "Finance" },
+  payouts: { path: "/finance", label: "Finance" },
+  accounting: { path: "/finance", label: "Finance" },
+  marketing: { path: "/marketing", label: "Marketing" },
+  campaigns: { path: "/marketing", label: "Marketing" },
+  ads: { path: "/marketing", label: "Marketing" },
+  analytics: { path: "/analytics", label: "Analytics" },
+  reports: { path: "/analytics", label: "Analytics" },
+  automation: { path: "/automation", label: "Automation" },
+  rules: { path: "/automation", label: "Automation" },
+  workflows: { path: "/automation", label: "Automation" },
 };
 
 /** Take the operator somewhere in the OS, deep-linked where it helps. */
@@ -644,7 +659,8 @@ export async function navigateTo(
     return {
       summary:
         `"${args.destination ?? ""}" is not a page in ProSellerOS. ` +
-        `Available: dashboard, products, orders, marketplaces, assistant.`,
+        `Available: dashboard, products, orders, marketplaces, assistant, ` +
+        `inventory, customers, finance, marketing, analytics, automation.`,
     };
   }
 

@@ -3,6 +3,15 @@
 import * as React from "react";
 import { PRODUCTS, Product } from "./products";
 import { ORDERS, Order } from "./orders";
+import {
+  PURCHASE_ORDERS,
+  PurchaseOrder,
+  STOCK_MOVEMENTS,
+  StockMovement,
+} from "./inventory";
+import { PAYOUTS, Payout } from "./finance";
+import { CAMPAIGNS, Campaign } from "./marketing";
+import { RULES, Rule, RULE_RUNS, RuleRun } from "./automation";
 
 /**
  * Lightweight observable store for mock CRUD. The demo has no backend for the
@@ -64,6 +73,16 @@ function createEntityStore<T extends { id: string }>(
 
 export const productStore = createEntityStore<Product>(PRODUCTS);
 export const orderStore = createEntityStore<Order>(ORDERS);
+
+// Module stores. Inventory positions and the customer book are *derived* from
+// products/orders rather than stored, so they stay correct when those change;
+// only entities the operator edits directly get a store of their own.
+export const purchaseOrderStore = createEntityStore<PurchaseOrder>(PURCHASE_ORDERS);
+export const movementStore = createEntityStore<StockMovement>(STOCK_MOVEMENTS);
+export const payoutStore = createEntityStore<Payout>(PAYOUTS);
+export const campaignStore = createEntityStore<Campaign>(CAMPAIGNS);
+export const ruleStore = createEntityStore<Rule>(RULES);
+export const ruleRunStore = createEntityStore<RuleRun>(RULE_RUNS);
 
 /** Subscribe to the full list of an entity store (re-renders on any mutation). */
 export function useEntityList<T extends { id: string }>(

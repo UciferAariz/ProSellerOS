@@ -13,6 +13,12 @@ import {
   Moon,
   Sun,
   ArrowRight,
+  Boxes,
+  Users,
+  Wallet,
+  Megaphone,
+  BarChart3,
+  Workflow,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -26,6 +32,12 @@ const PAGES = [
   { label: "Orders", href: "/orders", icon: ShoppingCart },
   { label: "Marketplaces", href: "/marketplaces", icon: Plug },
   { label: "AI Assistant", href: "/assistant", icon: Sparkles },
+  { label: "Inventory", href: "/inventory", icon: Boxes },
+  { label: "Customers", href: "/customers", icon: Users },
+  { label: "Finance", href: "/finance", icon: Wallet },
+  { label: "Marketing", href: "/marketing", icon: Megaphone },
+  { label: "Analytics", href: "/analytics", icon: BarChart3 },
+  { label: "Automation", href: "/automation", icon: Workflow },
 ];
 
 export function CommandPalette({
