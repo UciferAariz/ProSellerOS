@@ -19,6 +19,16 @@ frontend:
         - npm ci --cache .npm --prefer-offline
     build:
       commands:
+        # Amplify does NOT pass console environment variables to the Next.js
+        # server runtime — they exist only in the build environment, and server
+        # components see nothing. Writing them to .env.production is the
+        # documented way to make them readable at request time:
+        # https://docs.aws.amazon.com/amplify/latest/userguide/ssr-environment-variables.html
+        #
+        # No `|| true` here on purpose: if this matches nothing the build should
+        # fail loudly, because the alternative is a green deploy that silently
+        # serves mock data (the assistant route swallows backend errors).
+        - env | grep -E '^(AI_PROVIDER|COCKROACH_DSN|EMBED_DIMS|S3_BUCKET|APP_AWS_REGION|GCP_SA_KEY|GEMINI_[A-Z_]+|GOOGLE_CLOUD_[A-Z_]+)=' >> .env.production
         - npm run build
   artifacts:
     baseDirectory: .next

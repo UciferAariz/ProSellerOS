@@ -79,9 +79,17 @@ If any service is unset the app still builds and runs on mock data.
 
 ## 3. Environment variables
 
-Amplify console -> **App settings -> Environment variables**. These are
-available at build **and** to the SSR compute at runtime. Set the same values
-you used in `.env.local`:
+Amplify console -> **App settings -> Environment variables**. Set the same
+values you used in `.env.local`:
+
+> **These do NOT reach the server runtime on their own.** Amplify exposes console
+> variables to the *build* only; Next.js server components see none of them, by
+> design, so build-time secrets can't leak into a deployment. The symptom is
+> nasty: everything deploys green, `activeProvider()` auto-detects Bedrock from
+> the Lambda env, and the assistant serves mock data. [amplify.yml](../amplify.yml)
+> therefore writes them into `.env.production` during the build — any variable
+> added below must also be added to that grep pattern.
+> ([AWS docs](https://docs.aws.amazon.com/amplify/latest/userguide/ssr-environment-variables.html))
 
 ```
 AI_PROVIDER=gemini            # or "bedrock" — see "Choosing the LLM provider"
