@@ -33,7 +33,6 @@ import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/format";
 import {
   answer,
-  AssistantReply,
   AssistantWidget,
   SUGGESTED_PROMPTS,
 } from "@/lib/mock/assistant";
@@ -45,6 +44,13 @@ interface Message {
   widget?: AssistantWidget;
   followups?: string[];
 }
+
+// Mirrors the NDJSON events emitted by /api/assistant.
+type StreamEvent =
+  | { type: "text"; delta: string }
+  | { type: "reset" }
+  | { type: "widget"; widget: AssistantWidget }
+  | { type: "done"; followups?: string[]; source?: string };
 
 let idc = 1;
 
@@ -59,26 +65,110 @@ export default function AssistantPage() {
   ]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
+  const [sessionId, setSessionId] = useState("web-demo");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, thinking]);
 
-  function send(text: string) {
+  // Stable per-browser session id so the copilot's CockroachDB memory persists
+  // across reloads (falls back to a shared id if storage is unavailable).
+  useEffect(() => {
+    try {
+      let sid = localStorage.getItem("pso_session");
+      if (!sid) {
+        sid = `web-${Math.random().toString(36).slice(2, 10)}`;
+        localStorage.setItem("pso_session", sid);
+      }
+      setSessionId(sid);
+    } catch {
+      /* keep default */
+    }
+  }, []);
+
+  async function send(text: string) {
     if (!text.trim()) return;
     const userMsg: Message = { id: idc++, role: "user", text };
     setMessages((m) => [...m, userMsg]);
     setInput("");
     setThinking(true);
-    const reply: AssistantReply = answer(text);
-    setTimeout(() => {
+
+    try {
+      const res = await fetch("/api/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: text, sessionId }),
+      });
+      if (!res.ok || !res.body) throw new Error(`assistant ${res.status}`);
+      await consumeStream(res.body);
+    } catch {
+      // Backend unreachable — fall back to the local mock (demo-safe).
+      const reply = answer(text);
       setThinking(false);
       setMessages((m) => [
         ...m,
         { id: idc++, role: "assistant", text: reply.text, widget: reply.widget, followups: reply.followups },
       ]);
-    }, 900);
+    }
+  }
+
+  // Read the NDJSON event stream and progressively build one assistant message.
+  async function consumeStream(body: ReadableStream<Uint8Array>) {
+    const assistantId = idc++;
+    let started = false;
+    // Append the (empty) assistant bubble exactly once, on the first event.
+    const ensureStarted = () => {
+      if (started) return;
+      started = true;
+      setThinking(false);
+      setMessages((prev) => [...prev, { id: assistantId, role: "assistant", text: "" }]);
+    };
+    const patch = (fn: (m: Message) => Message) => {
+      ensureStarted();
+      setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
+    };
+
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    const handle = (line: string) => {
+      if (!line.trim()) return;
+      let ev: StreamEvent;
+      try {
+        ev = JSON.parse(line) as StreamEvent;
+      } catch {
+        return;
+      }
+      switch (ev.type) {
+        case "text":
+          patch((m) => ({ ...m, text: m.text + ev.delta }));
+          break;
+        case "reset":
+          patch((m) => ({ ...m, text: "" }));
+          break;
+        case "widget":
+          patch((m) => ({ ...m, widget: ev.widget }));
+          break;
+        case "done":
+          patch((m) => ({ ...m, followups: ev.followups }));
+          break;
+      }
+    };
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        handle(buf.slice(0, nl));
+        buf = buf.slice(nl + 1);
+      }
+    }
+    if (buf) handle(buf);
+    if (!started) setThinking(false); // empty stream — clear the indicator
   }
 
   return (

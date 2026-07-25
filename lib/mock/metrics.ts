@@ -129,3 +129,117 @@ export const CATEGORY_METRICS: CategoryMetric[] = [
   { category: "Home & Kitchen", revenue: 176000, units: 2190 },
   { category: "Accessories", revenue: 121000, units: 3380 },
 ];
+
+// ---- Date-range–aware dashboard data ---------------------------------------
+
+export type MetricRange = "7d" | "30d" | "90d" | "ytd";
+
+export const METRIC_RANGES: { key: MetricRange; label: string }[] = [
+  { key: "7d", label: "7 days" },
+  { key: "30d", label: "30 days" },
+  { key: "90d", label: "90 days" },
+  { key: "ytd", label: "YTD" },
+];
+
+export interface DashboardData {
+  kpis: Kpi[];
+  series: SeriesPoint[];
+  marketplaces: MarketplaceMetric[];
+  categories: CategoryMetric[];
+  rangeLabel: string;
+}
+
+// Volume multiplier vs the canonical 30-day window.
+const RANGE_FACTOR: Record<MetricRange, number> = {
+  "7d": 0.235,
+  "30d": 1,
+  "90d": 3.02,
+  "ytd": 6.78,
+};
+
+const RANGE_SEED: Record<MetricRange, number> = {
+  "7d": 700,
+  "30d": 3000,
+  "90d": 900,
+  "ytd": 3650,
+};
+
+// KPIs whose value is a running total (scale with the window). The rest are
+// rates / averages / indices and stay flat across ranges.
+const CUMULATIVE_KPIS = new Set(["revenue", "orders", "profit"]);
+
+// Numeric counts embedded in the canonical 30-day sub-labels, scaled per range.
+const SUB_BASE: Record<string, { count: number; suffix: string }> = {
+  orders: { count: 1204, suffix: "pending" },
+  returns: { count: 512, suffix: "returns" },
+};
+
+function scaleKpi(
+  kpi: Kpi,
+  factor: number,
+  rng: ReturnType<typeof makeRng>
+): Kpi {
+  const cumulative = CUMULATIVE_KPIS.has(kpi.key);
+  const value = cumulative ? Math.round(kpi.value * factor) : kpi.value;
+  const delta = +(kpi.delta + rng.float(-1.8, 1.8)).toFixed(1);
+  const spark = kpi.spark.map((v) =>
+    Math.max(4, +(v * (0.85 + rng.float(0, 0.3))).toFixed(1))
+  );
+  let sub = kpi.sub;
+  const base = SUB_BASE[kpi.key];
+  if (base) {
+    sub = `${Math.round(base.count * factor).toLocaleString("en-US")} ${base.suffix}`;
+  }
+  return { ...kpi, value, delta, spark, sub };
+}
+
+/**
+ * Returns dashboard metrics scaled to the selected date range. The 30-day
+ * window returns the canonical figures verbatim so the hero numbers used in
+ * the pitch never change; every other range is deterministic (seeded RNG) so
+ * SSR and CSR stay in sync (no hydration mismatch).
+ */
+export function getDashboardData(range: MetricRange): DashboardData {
+  const rangeLabel = METRIC_RANGES.find((r) => r.key === range)?.label ?? "30 days";
+
+  if (range === "30d") {
+    return {
+      kpis: KPIS,
+      series: SERIES.daily,
+      marketplaces: MARKETPLACE_METRICS,
+      categories: CATEGORY_METRICS,
+      rangeLabel,
+    };
+  }
+
+  const factor = RANGE_FACTOR[range];
+  const rng = makeRng(RANGE_SEED[range]);
+
+  const kpis = KPIS.map((k) => scaleKpi(k, factor, rng));
+
+  const series =
+    range === "7d"
+      ? SERIES.daily.slice(-7)
+      : range === "90d"
+      ? SERIES.weekly
+      : SERIES.monthly;
+
+  const scaled = MARKETPLACE_METRICS.map((m) => ({
+    ...m,
+    revenue: Math.round(m.revenue * factor),
+    orders: Math.round(m.orders * factor),
+  }));
+  const totalRev = scaled.reduce((s, m) => s + m.revenue, 0);
+  const marketplaces = scaled.map((m) => ({
+    ...m,
+    share: +((m.revenue / totalRev) * 100).toFixed(1),
+  }));
+
+  const categories = CATEGORY_METRICS.map((c) => ({
+    ...c,
+    revenue: Math.round(c.revenue * factor),
+    units: Math.round(c.units * factor),
+  }));
+
+  return { kpis, series, marketplaces, categories, rangeLabel };
+}

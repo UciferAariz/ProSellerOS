@@ -16,7 +16,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { ChartTooltip } from "./chart-tooltip";
-import { SERIES, Granularity } from "@/lib/mock/metrics";
+import { SERIES, Granularity, SeriesPoint } from "@/lib/mock/metrics";
 import { formatCurrency } from "@/lib/format";
 import { exportToCsv } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -27,10 +27,20 @@ const RANGES: { key: Granularity; label: string }[] = [
   { key: "monthly", label: "Monthly" },
 ];
 
-export function RevenueChart() {
+export function RevenueChart({
+  series,
+  rangeLabel,
+}: {
+  series?: SeriesPoint[];
+  rangeLabel?: string;
+} = {}) {
   const [granularity, setGranularity] = useState<Granularity>("daily");
   const [compare, setCompare] = useState(false);
-  const data = SERIES[granularity];
+  // Controlled mode: the dashboard date-range drives the series; the internal
+  // granularity toggle is hidden and replaced by a static range label.
+  const controlled = series !== undefined;
+  const data = controlled ? series : SERIES[granularity];
+  const exportKey = controlled ? (rangeLabel ?? "range").replace(/\s+/g, "-").toLowerCase() : granularity;
 
   const total = data.reduce((s, d) => s + d.revenue, 0);
   const prevTotal = data.reduce((s, d) => s + d.prev, 0);
@@ -58,28 +68,36 @@ export function RevenueChart() {
             <Switch checked={compare} onCheckedChange={setCompare} />
             Compare
           </label>
-          <div className="inline-flex rounded-lg border border-border bg-secondary/60 p-0.5">
-            {RANGES.map((r) => (
-              <button
-                key={r.key}
-                onClick={() => setGranularity(r.key)}
-                className={cn(
-                  "rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
-                  granularity === r.key
-                    ? "bg-card text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
+          {controlled ? (
+            rangeLabel && (
+              <span className="rounded-md border border-border bg-secondary/60 px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                Last {rangeLabel}
+              </span>
+            )
+          ) : (
+            <div className="inline-flex rounded-lg border border-border bg-secondary/60 p-0.5">
+              {RANGES.map((r) => (
+                <button
+                  key={r.key}
+                  onClick={() => setGranularity(r.key)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                    granularity === r.key
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          )}
           <Button
             variant="outline"
             size="icon-sm"
             title="Download CSV"
             onClick={() =>
-              exportToCsv(`revenue-${granularity}`, data as unknown as Record<string, unknown>[])
+              exportToCsv(`revenue-${exportKey}`, data as unknown as Record<string, unknown>[])
             }
           >
             <Download />

@@ -1,6 +1,6 @@
 "use client";
 
-import { use } from "react";
+import { use, useMemo, useState } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -13,17 +13,31 @@ import {
   TrendingUp,
   DollarSign,
   Boxes,
+  Sparkles,
+  Minus,
+  Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { MarketplaceBadge } from "@/components/app/marketplace-badge";
 import { Sparkline } from "@/components/app/sparkline";
+import { ProductFormDialog, ProductFormValues } from "@/components/app/product-form-dialog";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber, formatDate } from "@/lib/format";
-import { getProduct } from "@/lib/mock/products";
+import { productStore, useEntity } from "@/lib/mock/store";
 import { makeRng } from "@/lib/mock/rng";
 
 export default function ProductDetailPage({
@@ -32,12 +46,22 @@ export default function ProductDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const product = getProduct(id);
+  const product = useEntity(productStore, id);
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [stockInput, setStockInput] = useState<string | null>(null);
+
+  const salesSeries = useMemo(() => {
+    const rng = makeRng(id.length * 137 + (product?.units30d ?? 0));
+    return Array.from({ length: 20 }, () => rng.int(20, 90));
+  }, [id, product?.units30d]);
+
   if (!product) notFound();
 
-  const rng = makeRng(id.length * 137 + product.units30d);
-  const salesSeries = Array.from({ length: 20 }, () => rng.int(20, 90));
   const profit = product.price - product.cost;
+  // Uncontrolled edits: the input tracks its own draft until saved.
+  const stockDraft = stockInput ?? String(product.stock);
 
   const stats = [
     { icon: DollarSign, label: "Revenue (30d)", value: formatCurrency(product.revenue30d, { compact: true }) },
@@ -45,6 +69,44 @@ export default function ProductDetailPage({
     { icon: TrendingUp, label: "Profit / unit", value: formatCurrency(profit, { decimals: 2 }) },
     { icon: Boxes, label: "In stock", value: `${product.stock}` },
   ];
+
+  function handleEdit(values: ProductFormValues) {
+    productStore.update(product!.id, (prev) => ({
+      ...prev,
+      name: values.name.trim(),
+      sku: values.sku.trim() || prev.sku,
+      category: values.category,
+      price: +values.price.toFixed(2),
+      stock: values.stock,
+      margin: +(((values.price - prev.cost) / values.price) * 100).toFixed(1),
+    }));
+  }
+
+  function toggleListing(marketplace: string, next: boolean) {
+    productStore.update(product!.id, (prev) => ({
+      ...prev,
+      listings: prev.listings.map((l) =>
+        l.marketplace === marketplace
+          ? { ...l, status: next ? "live" : "inactive" }
+          : l
+      ),
+    }));
+    toast.success(next ? "Listing published" : "Listing paused");
+  }
+
+  function adjustStock(delta: number) {
+    const base = parseInt(stockDraft, 10) || 0;
+    setStockInput(String(Math.max(0, base + delta)));
+  }
+
+  function saveStock() {
+    const next = Math.max(0, parseInt(stockDraft, 10) || 0);
+    productStore.update(product!.id, { stock: next });
+    setStockInput(null);
+    toast.success(`Stock updated to ${next} units`);
+  }
+
+  const aiCopy = `${product.brand} ${product.name} — engineered for everyday performance. Premium ${product.category.toLowerCase()} with a ${product.margin}% margin, ${product.rating || 4.6}★ average rating${product.reviews ? ` across ${formatNumber(product.reviews)} reviews` : ""}. Ships fast across all ${product.listings.length} connected channels. Optimized title, bullet points, and keywords generated for maximum search visibility.`;
 
   return (
     <div className="space-y-6">
@@ -91,7 +153,10 @@ export default function ProductDetailPage({
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => toast.success("Opened in editor")}>
+          <Button variant="outline" size="sm" onClick={() => setAiOpen(true)}>
+            <Sparkles /> Regenerate listing
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
             <Edit /> Edit
           </Button>
           <Button size="sm" onClick={() => toast.success("Synced to all channels")}>
@@ -132,6 +197,7 @@ export default function ProductDetailPage({
                         <th className="px-4 py-2.5 text-left font-medium">Status</th>
                         <th className="px-4 py-2.5 text-right font-medium">Price</th>
                         <th className="px-4 py-2.5 text-right font-medium">vs base</th>
+                        <th className="px-4 py-2.5 text-right font-medium">Published</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -173,6 +239,15 @@ export default function ProductDetailPage({
                                 )}
                                 {Math.abs(diff).toFixed(1)}%
                               </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex justify-end">
+                                <Switch
+                                  checked={l.status === "live"}
+                                  onCheckedChange={(v) => toggleListing(l.marketplace, v)}
+                                  aria-label={`Toggle ${l.marketplace} listing`}
+                                />
+                              </div>
                             </td>
                           </tr>
                         );
@@ -244,7 +319,41 @@ export default function ProductDetailPage({
                 Reorder point at {product.reorderPoint} units.
                 {product.stock <= product.reorderPoint && " Below threshold — reorder soon."}
               </p>
-              <Button variant="secondary" size="sm" className="w-full" onClick={() => toast.success("Purchase order drafted")}>
+
+              <div className="space-y-1.5 border-t border-border pt-3">
+                <span className="text-xs font-medium text-muted-foreground">Adjust stock</span>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="icon-sm" onClick={() => adjustStock(-10)} aria-label="Decrease">
+                    <Minus />
+                  </Button>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={stockDraft}
+                    onChange={(e) => setStockInput(e.target.value)}
+                    className="h-8 text-center tabular-nums"
+                  />
+                  <Button variant="outline" size="icon-sm" onClick={() => adjustStock(10)} aria-label="Increase">
+                    <Plus />
+                  </Button>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  disabled={String(product.stock) === stockDraft}
+                  onClick={saveStock}
+                >
+                  Save stock level
+                </Button>
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => toast.success("Purchase order drafted")}
+              >
                 Create purchase order
               </Button>
             </CardContent>
@@ -264,6 +373,49 @@ export default function ProductDetailPage({
           </Card>
         </div>
       </div>
+
+      <ProductFormDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        mode="edit"
+        initial={{
+          name: product.name,
+          sku: product.sku,
+          category: product.category,
+          price: product.price,
+          stock: product.stock,
+        }}
+        onSubmit={handleEdit}
+      />
+
+      <Dialog open={aiOpen} onOpenChange={setAiOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="size-4 text-primary" /> AI-optimized listing
+            </DialogTitle>
+            <DialogDescription>
+              Generated for {product.name}. Review and apply across your channels.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm leading-relaxed">
+            {aiCopy}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAiOpen(false)}>
+              Discard
+            </Button>
+            <Button
+              onClick={() => {
+                setAiOpen(false);
+                toast.success("Listing copy applied to all channels");
+              }}
+            >
+              Apply to channels
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

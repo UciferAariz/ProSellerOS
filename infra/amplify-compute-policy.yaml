@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Least-privilege IAM managed policy for the ProSellerOS Amplify SSR compute
+  role (Bedrock invoke + S3 artifact access). Create the stack, then attach the
+  output policy to the Amplify app compute (SSR) role. See docs/DEPLOY.md.
+
+Parameters:
+  BedrockChatModelId:
+    Type: String
+    Default: anthropic.claude-3-5-sonnet-20241022-v2:0
+    Description: Underlying foundation-model id (without the region-prefix of the inference profile).
+  BedrockInferenceProfileId:
+    Type: String
+    Default: apac.anthropic.claude-3-5-sonnet-20241022-v2:0
+    Description: Cross-region inference profile id used to call the chat model.
+  BedrockEmbedModelId:
+    Type: String
+    Default: amazon.titan-embed-text-v2:0
+    Description: Embedding foundation-model id.
+  ArtifactBucketName:
+    Type: String
+    Description: Name of the S3 bucket that stores generated listings and report exports.
+
+Resources:
+  ProSellerOSComputePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: proselleros-amplify-compute
+      Description: Bedrock invoke + S3 artifact access for the ProSellerOS SSR compute role.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: BedrockInvoke
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockInferenceProfileId}"
+              - !Sub "arn:aws:bedrock:*::foundation-model/${BedrockChatModelId}"
+              - !Sub "arn:aws:bedrock:*::foundation-model/${BedrockEmbedModelId}"
+          - Sid: S3Artifacts
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${ArtifactBucketName}/*"
+          - Sid: S3ListBucket
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Sub "arn:aws:s3:::${ArtifactBucketName}"
+
+Outputs:
+  PolicyArn:
+    Description: Attach this managed policy ARN to the Amplify compute (SSR) IAM role.
+    Value: !Ref ProSellerOSComputePolicy

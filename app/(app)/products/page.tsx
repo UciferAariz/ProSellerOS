@@ -8,34 +8,116 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/app/page-header";
 import { DataTable } from "@/components/app/data-table";
 import { MarketplaceLogo } from "@/components/app/marketplace-badge";
+import { ProductFormDialog, ProductFormValues } from "@/components/app/product-form-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/format";
-import { PRODUCTS, Product } from "@/lib/mock/products";
+import { Product, ProductListing } from "@/lib/mock/products";
+import { MARKETPLACE_LIST } from "@/lib/mock/marketplaces";
+import { productStore, useEntityList } from "@/lib/mock/store";
 
-const CATEGORIES = [...new Set(PRODUCTS.map((p) => p.category))].sort();
+const GRADIENTS = [
+  "linear-gradient(135deg,#6366f1,#a855f7)",
+  "linear-gradient(135deg,#10b981,#22d3ee)",
+  "linear-gradient(135deg,#f59e0b,#ef4444)",
+  "linear-gradient(135deg,#ec4899,#8b5cf6)",
+  "linear-gradient(135deg,#0ea5e9,#6366f1)",
+];
+
+/** Build a full Product record from the create dialog's minimal form values. */
+function productFromForm(v: ProductFormValues, index: number): Product {
+  const price = +v.price.toFixed(2);
+  const cost = +(price * 0.55).toFixed(2);
+  const listings: ProductListing[] = [
+    { marketplace: "amazon", status: "pending", price },
+  ];
+  return {
+    id: `prod_${Date.now()}`,
+    sku: v.sku.trim() || `NEW-${2300 + index}`,
+    name: v.name.trim(),
+    category: v.category,
+    brand: "House",
+    image: GRADIENTS[index % GRADIENTS.length],
+    price,
+    cost,
+    stock: v.stock,
+    reorderPoint: 20,
+    status: "draft",
+    rating: 0,
+    reviews: 0,
+    units30d: 0,
+    revenue30d: 0,
+    trend: 0,
+    margin: +(((price - cost) / price) * 100).toFixed(1),
+    listings,
+    createdAt: new Date("2026-07-23").toISOString(),
+    tags: ["new"],
+  };
+}
 
 export default function ProductsPage() {
   const router = useRouter();
+  const products = useEntityList(productStore);
+
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState("all");
+  const [channel, setChannel] = useState("all");
+  const [addOpen, setAddOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Product[] | null>(null);
+
+  const categories = useMemo(
+    () => [...new Set(products.map((p) => p.category))].sort(),
+    [products]
+  );
 
   const filtered = useMemo(
     () =>
-      PRODUCTS.filter(
+      products.filter(
         (p) =>
           (category === "all" || p.category === category) &&
-          (status === "all" || p.status === status)
+          (status === "all" || p.status === status) &&
+          (channel === "all" || p.listings.some((l) => l.marketplace === channel))
       ),
-    [category, status]
+    [products, category, status, channel]
   );
 
-  const totalValue = PRODUCTS.reduce((s, p) => s + p.price * p.stock, 0);
-  const activeCount = PRODUCTS.filter((p) => p.status === "active").length;
-  const lowCount = PRODUCTS.filter((p) => p.stock <= p.reorderPoint && p.status === "active").length;
+  const totalValue = products.reduce((s, p) => s + p.price * p.stock, 0);
+  const activeCount = products.filter((p) => p.status === "active").length;
+  const lowCount = products.filter(
+    (p) => p.stock <= p.reorderPoint && p.status === "active"
+  ).length;
+
+  function handleCreate(values: ProductFormValues) {
+    productStore.add(productFromForm(values, products.length));
+  }
+
+  function setStatusFor(rows: Product[], next: Product["status"]) {
+    rows.forEach((r) => productStore.update(r.id, { status: next }));
+    toast.success(
+      `${rows.length} product${rows.length > 1 ? "s" : ""} ${
+        next === "active" ? "activated" : "archived"
+      }`
+    );
+  }
+
+  function confirmDelete() {
+    if (!pendingDelete) return;
+    const n = pendingDelete.length;
+    productStore.remove(pendingDelete.map((p) => p.id));
+    setPendingDelete(null);
+    toast.success(`Deleted ${n} product${n > 1 ? "s" : ""}`);
+  }
 
   const columns: ColumnDef<Product, unknown>[] = [
     {
@@ -161,13 +243,21 @@ export default function ProductsPage() {
         description="Your master catalog synced across every marketplace."
         actions={
           <>
-            <Button variant="outline" size="sm">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => toast.info("Drop a CSV to import — coming to your workspace soon")}
+            >
               <Upload /> Import
             </Button>
-            <Button variant="secondary" size="sm">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => toast.success("Queued AI descriptions for review")}
+            >
               <Sparkles /> AI descriptions
             </Button>
-            <Button size="sm" onClick={() => toast.success("New product draft created")}>
+            <Button size="sm" onClick={() => setAddOpen(true)}>
               <Plus /> Add product
             </Button>
           </>
@@ -175,7 +265,7 @@ export default function ProductsPage() {
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Total SKUs" value={formatNumber(PRODUCTS.length)} sub="across catalog" />
+        <StatCard label="Total SKUs" value={formatNumber(products.length)} sub="across catalog" />
         <StatCard label="Active listings" value={formatNumber(activeCount)} sub="published & live" />
         <StatCard label="Inventory value" value={formatCurrency(totalValue, { compact: true })} sub="at retail price" />
         <StatCard
@@ -199,7 +289,7 @@ export default function ProductsPage() {
           <div className="flex items-center gap-2">
             <Select value={category} onChange={(e) => setCategory(e.target.value)} className="w-auto">
               <option value="all">All categories</option>
-              {CATEGORIES.map((c) => (
+              {categories.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
@@ -211,6 +301,16 @@ export default function ProductsPage() {
               <option value="draft">Draft</option>
               <option value="archived">Archived</option>
             </Select>
+            <Select value={channel} onChange={(e) => setChannel(e.target.value)} className="w-auto">
+              <option value="all">All channels</option>
+              {MARKETPLACE_LIST.filter((m) =>
+                products.some((p) => p.listings.some((l) => l.marketplace === m.id))
+              ).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </Select>
           </div>
         }
         bulkActions={(rows) => (
@@ -219,21 +319,54 @@ export default function ProductsPage() {
               size="sm"
               variant="ghost"
               className="h-7"
-              onClick={() => toast.success(`Publishing ${rows.length} products…`)}
+              onClick={() => setStatusFor(rows, "active")}
             >
-              Publish
+              Activate
             </Button>
             <Button
               size="sm"
               variant="ghost"
               className="h-7"
-              onClick={() => toast.success(`Repriced ${rows.length} products`)}
+              onClick={() => setStatusFor(rows, "archived")}
             >
-              Reprice
+              Archive
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-danger hover:text-danger"
+              onClick={() => setPendingDelete(rows)}
+            >
+              Delete
             </Button>
           </>
         )}
       />
+
+      <ProductFormDialog open={addOpen} onOpenChange={setAddOpen} onSubmit={handleCreate} />
+
+      <Dialog open={pendingDelete !== null} onOpenChange={(o) => !o && setPendingDelete(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete {pendingDelete?.length} product{(pendingDelete?.length ?? 0) > 1 ? "s" : ""}?</DialogTitle>
+            <DialogDescription>
+              This removes the selected {(pendingDelete?.length ?? 0) > 1 ? "products" : "product"} from your
+              catalog and unpublishes every channel listing. This can&apos;t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-danger text-white hover:bg-danger/90"
+              onClick={confirmDelete}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

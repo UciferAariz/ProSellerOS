@@ -1,6 +1,6 @@
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -13,15 +13,38 @@ import {
   Check,
   Mail,
   Phone,
+  RotateCcw,
+  PackageCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { StatusPill } from "@/components/app/status-pill";
 import { MarketplaceBadge } from "@/components/app/marketplace-badge";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatDate, initials } from "@/lib/format";
-import { getOrder, ORDER_STATUS_META } from "@/lib/mock/orders";
+import { formatCurrency, formatDate, initials, exportToCsv } from "@/lib/format";
+import { OrderStatus, ORDER_STATUS_META } from "@/lib/mock/orders";
+import { orderStore, useEntity } from "@/lib/mock/store";
+
+const REF_NOW = "2026-07-23T14:30:00Z";
+
+// The next forward step in the fulfillment lifecycle, and its CTA label.
+const NEXT_STEP: Partial<Record<OrderStatus, { to: OrderStatus; label: string }>> = {
+  pending: { to: "confirmed", label: "Confirm payment" },
+  confirmed: { to: "packed", label: "Mark packed" },
+  packed: { to: "shipped", label: "Mark shipped" },
+  shipped: { to: "delivered", label: "Mark delivered" },
+};
 
 export default function OrderDetailPage({
   params,
@@ -29,13 +52,68 @@ export default function OrderDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const order = getOrder(id);
+  const order = useEntity(orderStore, id);
+
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundReason, setRefundReason] = useState("Customer request");
+
   if (!order) notFound();
 
   const meta = ORDER_STATUS_META[order.status];
   const subtotal = order.items.reduce((s, it) => s + it.price * it.qty, 0);
   const shipping = order.payment === "cod" ? 0 : 5.99;
   const tax = +(subtotal * 0.08).toFixed(2);
+  const grand = subtotal + shipping + tax;
+  const next = NEXT_STEP[order.status];
+
+  function advanceStatus() {
+    if (!next) return;
+    orderStore.update(order!.id, (prev) => ({
+      ...prev,
+      status: next.to,
+      courier: prev.courier === "—" && next.to === "shipped" ? "Shiprocket" : prev.courier,
+      tracking:
+        prev.tracking === "—" && next.to === "shipped"
+          ? `TRK${String(Date.now()).slice(-9)}`
+          : prev.tracking,
+      timeline: [
+        ...prev.timeline,
+        { label: ORDER_STATUS_META[next.to].label, at: REF_NOW, done: true },
+      ],
+    }));
+    toast.success(`Order marked ${ORDER_STATUS_META[next.to].label.toLowerCase()}`);
+  }
+
+  function issueRefund() {
+    const amt = Number(refundAmount) || grand;
+    orderStore.update(order!.id, (prev) => ({
+      ...prev,
+      status: "returned",
+      timeline: [
+        ...prev.timeline,
+        { label: `Refund issued · ${formatCurrency(amt, { decimals: 2 })}`, at: REF_NOW, done: true },
+      ],
+    }));
+    setRefundOpen(false);
+    setRefundAmount("");
+    toast.success(`Refund of ${formatCurrency(amt, { decimals: 2 })} issued`);
+  }
+
+  function exportDoc(kind: "invoice" | "packing-slip") {
+    exportToCsv(
+      `${kind}-${order!.number.replace("#", "")}`,
+      order!.items.map((it) => ({
+        order: order!.number,
+        sku: it.sku,
+        item: it.name,
+        qty: it.qty,
+        price: it.price,
+        lineTotal: +(it.price * it.qty).toFixed(2),
+      }))
+    );
+    toast.success(kind === "invoice" ? "Invoice downloaded" : "Packing slip downloaded");
+  }
 
   return (
     <div className="space-y-6">
@@ -54,16 +132,32 @@ export default function OrderDetailPage({
           <StatusPill label={meta.label} variant={meta.variant} />
           {order.flagged && <StatusPill label="Flagged" variant="danger" />}
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => toast.success("Invoice generated")}>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => exportDoc("invoice")}>
             <FileText /> Invoice
           </Button>
-          <Button variant="outline" size="sm" onClick={() => toast.success("Packing slip queued")}>
+          <Button variant="outline" size="sm" onClick={() => exportDoc("packing-slip")}>
             <Printer /> Packing slip
           </Button>
-          <Button size="sm" onClick={() => toast.success("Shipping label created")}>
-            <Truck /> Create label
-          </Button>
+          {order.status !== "returned" && order.status !== "cancelled" && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-danger hover:text-danger"
+              onClick={() => setRefundOpen(true)}
+            >
+              <RotateCcw /> Refund
+            </Button>
+          )}
+          {next ? (
+            <Button size="sm" onClick={advanceStatus}>
+              {next.to === "shipped" ? <Truck /> : <PackageCheck />} {next.label}
+            </Button>
+          ) : (
+            <Button size="sm" disabled>
+              <Check /> {meta.label}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -102,7 +196,7 @@ export default function OrderDetailPage({
                 <div className="mt-2 flex items-center justify-between border-t border-border pt-2 text-base font-semibold">
                   <span>Total</span>
                   <span className="tabular-nums">
-                    {formatCurrency(subtotal + shipping + tax, { decimals: 2 })}
+                    {formatCurrency(grand, { decimals: 2 })}
                   </span>
                 </div>
               </div>
@@ -208,6 +302,53 @@ export default function OrderDetailPage({
           </Card>
         </div>
       </div>
+
+      <Dialog open={refundOpen} onOpenChange={setRefundOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Issue refund</DialogTitle>
+            <DialogDescription>
+              Refund {order.number}. Leave the amount blank to refund the full{" "}
+              {formatCurrency(grand, { decimals: 2 })}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label htmlFor="r-amt" className="text-sm font-medium">Refund amount (USD)</label>
+              <Input
+                id="r-amt"
+                type="number"
+                min={0}
+                step="0.01"
+                value={refundAmount}
+                onChange={(e) => setRefundAmount(e.target.value)}
+                placeholder={grand.toFixed(2)}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="r-reason" className="text-sm font-medium">Reason</label>
+              <Select
+                id="r-reason"
+                value={refundReason}
+                onChange={(e) => setRefundReason(e.target.value)}
+              >
+                <option>Customer request</option>
+                <option>Damaged in transit</option>
+                <option>Wrong item shipped</option>
+                <option>Item not as described</option>
+                <option>Late delivery</option>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRefundOpen(false)}>Cancel</Button>
+            <Button className="bg-danger text-white hover:bg-danger/90" onClick={issueRefund}>
+              Issue refund
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

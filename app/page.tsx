@@ -45,27 +45,57 @@ const STATS = [
 
 const PRICING = [
   {
-    name: "Starter",
-    price: "$49",
-    desc: "For new sellers getting organized.",
-    features: ["Up to 3 marketplaces", "1,000 orders / mo", "Unified dashboard", "Inventory sync", "Email support"],
-    cta: "Start free",
+    name: "Pay as you go",
+    price: "$0.01",
+    period: "/order",
+    desc: "2 months free, then just pay per order. No subscription, ever.",
+    features: [
+      "2 months free trial",
+      "Unlimited marketplaces",
+      "Unified dashboard",
+      "Inventory sync",
+      "$0.01 per order after trial",
+      "Email support",
+    ],
+    cta: "Start free trial",
     highlight: false,
   },
   {
-    name: "Growth",
-    price: "$149",
-    desc: "For scaling multi-channel brands.",
-    features: ["Up to 8 marketplaces", "25,000 orders / mo", "Automation engine", "AI copilot", "Analytics & reports", "Priority support"],
-    cta: "Start 14-day trial",
+    name: "Premium",
+    price: "$0.03",
+    period: "/order",
+    desc: "Everything in Pay as you go, plus advanced tools & AI.",
+    inheritsFrom: "Pay as you go",
+    features: [
+      "Automation engine",
+      "AI copilot",
+      "Advanced analytics & reports",
+      "Automatic repricing",
+      "Demand forecasting",
+      "Bulk listing & variant mapping",
+      "Priority support",
+      "$0.03 per order — no subscription",
+    ],
+    cta: "Upgrade to Premium",
     highlight: true,
   },
   {
-    name: "Scale",
+    name: "Enterprise",
     price: "Custom",
-    desc: "For high-volume operations & agencies.",
-    features: ["Unlimited marketplaces", "Unlimited orders", "SSO & SCIM", "White-label & API", "Dedicated CSM", "99.9% SLA"],
-    cta: "Talk to sales",
+    desc: "A dedicated agent runs your operation at very large volume.",
+    inheritsFrom: "Premium",
+    features: [
+      "Dedicated managed agent",
+      "Very large volume operations",
+      "Premium ROI analysis & optimization",
+      "Guaranteed ROI increment",
+      "Custom automation workflows",
+      "White-label & API access",
+      "Dedicated CSM & onboarding",
+      "99.9% uptime SLA",
+      "SSO, roles & audit logs",
+    ],
+    cta: "Contact for pricing",
     highlight: false,
   },
 ];
@@ -131,7 +161,7 @@ export default function LandingPage() {
               </Button>
             </motion.div>
             <motion.p variants={fadeUp} className="mt-3 text-xs text-muted-foreground">
-              No credit card required · 14-day Growth trial · Cancel anytime
+              No credit card required · 2 months free · No subscription
             </motion.p>
           </motion.div>
 
@@ -286,48 +316,97 @@ export default function LandingPage() {
             Simple, scalable pricing
           </h2>
           <p className="mt-4 text-muted-foreground">
-            Start free. Upgrade as you grow. No per-order fees, ever.
+            2 months free, then pay as you go. No subscriptions — only pay per order.
           </p>
         </div>
-        <div className="mt-12 grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="mt-12 grid grid-cols-1 items-center gap-6 lg:grid-cols-3">
           {PRICING.map((tier) => (
             <div
               key={tier.name}
               className={
-                "relative flex flex-col rounded-2xl border p-7 " +
+                "relative flex flex-col rounded-2xl border p-7 transition-transform " +
                 (tier.highlight
-                  ? "border-primary bg-card shadow-lg ring-1 ring-primary/30"
+                  ? "z-10 border-primary/60 text-white shadow-2xl shadow-primary/30 ring-1 ring-primary/40 lg:scale-[1.06]"
                   : "border-border bg-card")
+              }
+              style={
+                tier.highlight
+                  ? { background: "linear-gradient(160deg,#4f46e5,#7c3aed 55%,#a855f7)" }
+                  : undefined
               }
             >
               {tier.highlight && (
-                <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground">
-                  Most popular
-                </span>
+                <>
+                  <div className="pointer-events-none absolute inset-0 grid-bg rounded-2xl opacity-20" />
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-white px-3 py-1 text-xs font-semibold text-primary shadow-md">
+                    ★ Most popular
+                  </span>
+                </>
               )}
-              <h3 className="font-semibold">{tier.name}</h3>
-              <div className="mt-3 flex items-end gap-1">
-                <span className="text-4xl font-semibold tracking-tight">{tier.price}</span>
-                {tier.price !== "Custom" && (
-                  <span className="mb-1 text-sm text-muted-foreground">/mo</span>
+              <div className="relative flex flex-1 flex-col">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">{tier.name}</h3>
+                  {tier.highlight && (
+                    <Sparkles className="size-5 text-white/90" />
+                  )}
+                </div>
+                <div className="mt-3 flex items-end gap-1">
+                  <span className="text-4xl font-bold tracking-tight">{tier.price}</span>
+                  {tier.price !== "Custom" && (
+                    <span
+                      className={
+                        "mb-1 text-sm " +
+                        (tier.highlight ? "text-white/70" : "text-muted-foreground")
+                      }
+                    >
+                      {tier.period}
+                    </span>
+                  )}
+                </div>
+                <p
+                  className={
+                    "mt-2 text-sm " +
+                    (tier.highlight ? "text-white/80" : "text-muted-foreground")
+                  }
+                >
+                  {tier.desc}
+                </p>
+                {tier.inheritsFrom && (
+                  <p
+                    className={
+                      "mt-6 text-xs font-medium uppercase tracking-wide " +
+                      (tier.highlight ? "text-white/70" : "text-muted-foreground")
+                    }
+                  >
+                    Everything in {tier.inheritsFrom}, plus:
+                  </p>
                 )}
+                <ul className={(tier.inheritsFrom ? "mt-3" : "mt-6") + " flex-1 space-y-3"}>
+                  {tier.features.map((f) => (
+                    <li key={f} className="flex items-center gap-2.5 text-sm">
+                      <Check
+                        className={
+                          "size-4 shrink-0 " +
+                          (tier.highlight ? "text-white" : "text-primary")
+                        }
+                      />
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <Button
+                  className={
+                    "mt-7 " +
+                    (tier.highlight
+                      ? "bg-white text-primary hover:bg-white/90"
+                      : "")
+                  }
+                  variant={tier.highlight ? "default" : "secondary"}
+                  asChild
+                >
+                  <Link href="/login">{tier.cta}</Link>
+                </Button>
               </div>
-              <p className="mt-2 text-sm text-muted-foreground">{tier.desc}</p>
-              <ul className="mt-6 flex-1 space-y-3">
-                {tier.features.map((f) => (
-                  <li key={f} className="flex items-center gap-2.5 text-sm">
-                    <Check className="size-4 shrink-0 text-primary" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <Button
-                className="mt-7"
-                variant={tier.highlight ? "default" : "secondary"}
-                asChild
-              >
-                <Link href="/login">{tier.cta}</Link>
-              </Button>
             </div>
           ))}
         </div>

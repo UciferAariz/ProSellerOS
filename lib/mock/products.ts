@@ -30,7 +30,7 @@ export interface Product {
   tags: string[];
 }
 
-const CATEGORIES = [
+export const CATEGORIES = [
   "Apparel", "Footwear", "Electronics", "Home & Kitchen", "Beauty",
   "Accessories", "Sports", "Toys", "Grocery", "Health",
 ];

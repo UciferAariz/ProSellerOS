@@ -1,0 +1,181 @@
+# Deploy runbook — ProSellerOS Copilot on AWS Amplify Hosting
+
+Full steps to take the app from a local repo to a live URL on **AWS Amplify
+Hosting** (Next.js 15 SSR). The app runs on mock data with zero config, so you
+can deploy first and wire the live backend incrementally.
+
+> AWS console labels shift between Amplify versions. Where a menu name might
+> differ, the runbook says what to look for, not just where. Verify resource
+> names against your account before applying.
+
+---
+
+## 0. Prerequisites
+
+| Need | How |
+|---|---|
+| CockroachDB Serverless cluster | `ccloud cluster create` -> Connect -> "General connection string" |
+| S3 bucket | `aws s3 mb s3://YOUR-BUCKET --region ap-southeast-2` |
+| An LLM provider | Either Bedrock **or** Gemini — see [Choosing the LLM provider](#choosing-the-llm-provider) |
+| Bedrock model access (if `AI_PROVIDER=bedrock`) | Bedrock console -> Model access -> enable **Claude 3.5 Sonnet** and **Titan Text Embeddings v2** in your region. Verify with `aws bedrock-runtime converse` before deploying. |
+| Gemini key | `GEMINI_API_KEY` from aistudio.google.com, or Vertex AI + ADC |
+| GitHub repo | `origin` is already set; push `main` |
+
+### Choosing the LLM provider
+
+`AI_PROVIDER` selects which backend runs the agent's chat and embeddings. Both
+run the **same** agent loop, tool set, and CockroachDB memory layer — only the
+provider differs, so this is a one-variable switch with no code change.
+
+| `AI_PROVIDER` | Chat | Embeddings | Use when |
+|---|---|---|---|
+| `bedrock` | Claude 3.5 Sonnet (via `apac.` inference profile) | Titan Text Embeddings v2 | Your account has Bedrock on-demand quota |
+| `gemini` | `gemini-2.5-flash` | `gemini-embedding-001` @ 1024 dims | Bedrock is unavailable, or you want the Gemini-centric story |
+
+Leave it **blank** and the app auto-detects, preferring Bedrock whenever AWS
+credentials are present. On Amplify the execution role always supplies
+credentials, so **set `AI_PROVIDER` explicitly** to force Gemini.
+
+Both providers emit unit-length vectors of `EMBED_DIMS` (1024) dims, matching
+the `VECTOR(1024)` columns in [db/schema.sql](../db/schema.sql) — so switching
+providers needs no schema change. It **does** require re-running
+`npm run db:ingest`, because vectors from different models are not comparable.
+
+> Hackathon A requires >=1 AWS service and is unaffected by running on Gemini:
+> Amplify Hosting, Lambda (SSR compute), and S3 still apply.
+
+**Region note (ap-southeast-2):** Claude must be invoked through its APAC
+**cross-region inference profile** (`apac.anthropic.claude-3-5-sonnet-20241022-v2:0`);
+the raw model id returns "Operation not allowed". Titan embeddings are called
+directly. This is already the default in [.env.example](../.env.example) and
+[lib/config.ts](../lib/config.ts).
+
+---
+
+## 1. Bootstrap the database (local, one time)
+
+```bash
+cp .env.example .env.local   # fill in COCKROACH_DSN, AWS creds, S3_BUCKET, GEMINI_*
+npm ci
+npm run db:bootstrap         # setup schema -> seed -> ingest embeddings
+npm run build && npm start   # verify the live backend locally before deploying
+```
+
+If any service is unset the app still builds and runs on mock data.
+
+---
+
+## 2. Create the Amplify app
+
+1. Amplify console -> **Create new app** -> **Deploy with Git** -> pick this repo
+   and the `main` branch.
+2. Amplify auto-detects **Next.js (SSR)** and uses [amplify.yml](../amplify.yml)
+   at the repo root. Confirm the platform shows **Web Compute** (SSR), not
+   "Static". This works because [next.config.ts](../next.config.ts) does **not**
+   set `output: "export"`.
+3. Node version is pinned to 20 via [.nvmrc](../.nvmrc).
+
+---
+
+## 3. Environment variables
+
+Amplify console -> **App settings -> Environment variables**. These are
+available at build **and** to the SSR compute at runtime. Set the same values
+you used in `.env.local`:
+
+```
+AI_PROVIDER=gemini            # or "bedrock" — see "Choosing the LLM provider"
+COCKROACH_DSN=postgresql://...:26257/proselleros?sslmode=verify-full
+AWS_REGION=ap-southeast-2
+EMBED_DIMS=1024
+S3_BUCKET=YOUR-BUCKET
+GEMINI_API_KEY=...            # or GEMINI_USE_VERTEX=true + GOOGLE_CLOUD_PROJECT
+GEMINI_MODEL_ID=gemini-2.5-flash
+GEMINI_EMBED_MODEL_ID=gemini-embedding-001
+# Only needed when AI_PROVIDER=bedrock:
+BEDROCK_CHAT_MODEL_ID=apac.anthropic.claude-3-5-sonnet-20241022-v2:0
+BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
+```
+
+Do **not** set `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` in Amplify — on the
+compute the SDK uses the execution role (next step). `isBedrockConfigured()`
+already treats the Amplify/Lambda execution env as "credentials present".
+
+---
+
+## 4. Grant the compute role Bedrock + S3
+
+The `/api/*` routes call Bedrock and S3 from the SSR compute, so its **execution
+(compute) role** needs permission. Prefer the CloudFormation policy (IaC):
+
+```bash
+aws cloudformation deploy \
+  --template-file infra/amplify-compute-policy.yaml \
+  --stack-name proselleros-compute-policy \
+  --parameter-overrides ArtifactBucketName=YOUR-BUCKET \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region ap-southeast-2
+# -> copy the PolicyArn output
+```
+
+Then attach that managed policy to the Amplify app's **compute (SSR) role**
+(Amplify console -> App settings -> **IAM roles** -> the SSR/compute role ->
+Attach policy). If your app has no compute role yet, create one Amplify can
+assume for compute and set it there.
+
+Prefer the console/CLI by hand? [infra/amplify-compute-policy.json](../infra/amplify-compute-policy.json)
+is the same policy as an inline document — replace `ACCOUNT_ID`, `REGION`,
+`BUCKET_NAME`.
+
+**S3 CORS** (only if the browser will fetch artifact URLs directly): add a CORS
+rule on the bucket allowing `GET` from your Amplify domain.
+
+---
+
+## 5. Deploy & verify
+
+1. Trigger a build (push to `main`, or **Redeploy this version**).
+2. Open the Amplify URL -> **/assistant**.
+3. Ask *"Which products are declining and why?"* You should get a streamed answer
+   plus the declining-products chart.
+4. Confirm it is **live**, not mock: the `/api/assistant` stream ends with
+   `{"type":"done",...,"source":"live"}`. Check with:
+   ```bash
+   curl -sN -X POST https://YOUR-APP.amplifyapp.com/api/assistant \
+     -H "Content-Type: application/json" \
+     -d '{"prompt":"declining products","sessionId":"deploy-check"}' | tail -1
+   ```
+5. Confirm CockroachDB memory persisted the turn:
+   ```sql
+   SELECT role, left(content,60), created_at
+   FROM agent_memory ORDER BY created_at DESC LIMIT 5;
+   ```
+
+---
+
+## 6. Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| Answers work but `source:"mock"` | Live backend not fully configured or the agent threw. Check CloudWatch logs for `[assistant] live agent failed`. Usually a missing env var or the compute role lacks Bedrock/S3. |
+| `AccessDeniedException` on Bedrock | Compute role missing the policy from step 4, **or** model access not enabled in the Bedrock console for this region. |
+| `Operation not allowed` / model-id error | In ap-southeast-2 you must use the `apac.` cross-region **inference profile** id, not the raw model id. |
+| `Operation not allowed` on **every** Bedrock model, including Titan | Account-level zero quota, not a config error. Check with `aws service-quotas list-service-quotas --service-code bedrock --region ap-southeast-2`; if the on-demand requests-per-minute values are `0.0` and marked `Adjustable: False`, only AWS Support can raise them. Set `AI_PROVIDER=gemini` to run the full live agent meanwhile. |
+| Gemini answers are empty but tools ran | Output budget consumed by thinking tokens. The adapter sets `thinkingConfig.thinkingBudget = 0` for this reason; if you raise it, also raise `maxTokens`. |
+| Gemini 400 on a tool call | A no-argument tool sent `properties: {}`. Gemini rejects empty OBJECT schemas; the adapter omits `parameters` for such tools ([lib/ai/gemini-agent.ts](../lib/ai/gemini-agent.ts)). |
+| Semantic search quality dropped after switching provider | Re-run `npm run db:ingest`. Vectors from different embedding models are not comparable. |
+| `ThrottlingException` | Bedrock on-demand quota. Retry, or request a quota increase. |
+| DB connect fails on Amplify | DSN must be the full `sslmode=verify-full` string; ensure the cluster allows the Amplify egress. |
+| Stream appears to arrive all at once | Some CDN/compute layers buffer responses. The UI renders identically either way; the response already sets `Cache-Control: no-transform`. Functionality is unaffected. |
+
+---
+
+## What each file does
+
+- [lib/ai/provider.ts](../lib/ai/provider.ts) — selects the LLM backend from `AI_PROVIDER`; the agent imports from here and never names a vendor.
+- [lib/ai/contract.ts](../lib/ai/contract.ts) — the shared provider interface both adapters implement.
+- [lib/ai/bedrock.ts](../lib/ai/bedrock.ts) / [lib/ai/gemini-agent.ts](../lib/ai/gemini-agent.ts) — the two interchangeable adapters.
+- [amplify.yml](../amplify.yml) — build spec (Node 20, `npm ci`, `next build`, `.next` artifacts + caches).
+- [.nvmrc](../.nvmrc) — pins the Amplify build to Node 20.
+- [infra/amplify-compute-policy.yaml](../infra/amplify-compute-policy.yaml) — CloudFormation managed policy (Bedrock + S3) for the compute role.
+- [infra/amplify-compute-policy.json](../infra/amplify-compute-policy.json) — the same policy as an inline IAM document.

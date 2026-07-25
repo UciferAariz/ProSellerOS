@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -23,12 +25,24 @@ import {
 } from "@/components/app/dashboard-charts";
 import { MarketplaceLogo } from "@/components/app/marketplace-badge";
 import { StatusPill } from "@/components/app/status-pill";
+import { ProductFormDialog } from "@/components/app/product-form-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatNumber, relativeTime } from "@/lib/format";
-import { KPIS } from "@/lib/mock/metrics";
+import {
+  formatCurrency,
+  formatNumber,
+  relativeTime,
+  exportToCsv,
+} from "@/lib/format";
+import {
+  getDashboardData,
+  MetricRange,
+  METRIC_RANGES,
+} from "@/lib/mock/metrics";
 import { CONNECTIONS, MARKETPLACES } from "@/lib/mock/marketplaces";
 import { TOP_PRODUCTS, LOW_STOCK } from "@/lib/mock/products";
 import { INSIGHTS, ACTIVITY, TASKS } from "@/lib/mock/insights";
@@ -45,10 +59,56 @@ const INSIGHT_META = {
   success: { icon: CircleCheck, color: "text-success", bg: "bg-success/12" },
 };
 
+// Map an insight's call-to-action to an existing destination, or null to toast.
+function insightHref(action?: string): string | null {
+  if (!action) return null;
+  const a = action.toLowerCase();
+  if (a.includes("reconnect") || a.includes("channel")) return "/marketplaces";
+  if (a.includes("pric")) return "/products";
+  return null;
+}
+
 export default function DashboardPage() {
-  const activeConnections = CONNECTIONS.filter(
-    (c) => c.status !== "disconnected"
-  );
+  const router = useRouter();
+  const [range, setRange] = useState<MetricRange>("30d");
+  const [refreshing, setRefreshing] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const data = useMemo(() => getDashboardData(range), [range]);
+
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  function changeRange(next: MetricRange) {
+    if (next === range) return;
+    setRange(next);
+    setRefreshing(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setRefreshing(false), 380);
+  }
+
+  function exportDashboard() {
+    const rows = data.kpis.map((k) => ({
+      metric: k.label,
+      value: k.value,
+      delta_pct: k.delta,
+      note: k.sub ?? "",
+    }));
+    exportToCsv(`dashboard-${range}`, rows);
+    toast.success("Dashboard exported", {
+      description: `${rows.length} metrics · last ${data.rangeLabel}`,
+    });
+  }
+
+  function handleInsight(action?: string) {
+    const dest = insightHref(action);
+    if (dest) router.push(dest);
+    else if (action) toast(action, { description: "Opening workflow…" });
+  }
+
+  const activeConnections = CONNECTIONS.filter((c) => c.status !== "disconnected");
 
   return (
     <div className="space-y-6">
@@ -57,85 +117,97 @@ export default function DashboardPage() {
         description="Your unified commerce cockpit across every connected channel."
         actions={
           <>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={exportDashboard}>
               <Download /> Export
             </Button>
-            <Button size="sm" asChild>
-              <Link href="/products">
-                <Plus /> Add product
-              </Link>
+            <Button size="sm" onClick={() => setAddOpen(true)}>
+              <Plus /> Add product
             </Button>
           </>
         }
       >
         <div className="flex flex-wrap items-center gap-2">
-          <Tabs defaultValue="30d">
+          <Tabs value={range} onValueChange={(v) => changeRange(v as MetricRange)}>
             <TabsList>
-              <TabsTrigger value="7d">7 days</TabsTrigger>
-              <TabsTrigger value="30d">30 days</TabsTrigger>
-              <TabsTrigger value="90d">90 days</TabsTrigger>
-              <TabsTrigger value="ytd">YTD</TabsTrigger>
+              {METRIC_RANGES.map((r) => (
+                <TabsTrigger key={r.key} value={r.key}>
+                  {r.label}
+                </TabsTrigger>
+              ))}
             </TabsList>
           </Tabs>
-          <StatusPill label="Live · syncing" variant="success" pulse />
+          <StatusPill
+            label={refreshing ? "Updating…" : "Live · syncing"}
+            variant={refreshing ? "info" : "success"}
+            pulse
+          />
         </div>
       </PageHeader>
 
-      {/* KPI grid */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {KPIS.map((kpi, i) => (
-          <KpiCard
-            key={kpi.key}
-            kpi={kpi}
-            accent={KPI_ACCENTS[i]}
-            href={kpi.key === "orders" ? "/orders" : undefined}
-          />
-        ))}
-      </div>
+      {/* Range-dependent analytics (KPIs + charts) */}
+      {refreshing ? (
+        <DashboardMetricsSkeleton />
+      ) : (
+        <>
+          {/* KPI grid */}
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {data.kpis.map((kpi, i) => (
+              <KpiCard
+                key={kpi.key}
+                kpi={kpi}
+                accent={KPI_ACCENTS[i]}
+                href={kpi.key === "orders" ? "/orders" : undefined}
+              />
+            ))}
+          </div>
 
-      {/* Revenue + channel mix */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <RevenueChart />
-        </div>
-        <Card>
-          <CardHeader className="flex-row items-center justify-between">
-            <CardTitle>Channel mix</CardTitle>
-            <Link
-              href="/marketplaces"
-              className="text-xs text-primary hover:underline"
-            >
-              View all
-            </Link>
-          </CardHeader>
-          <CardContent>
-            <ChannelDonut />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Comparison + categories + insights */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex-row items-center justify-between">
-            <div>
-              <CardTitle>Marketplace comparison</CardTitle>
-              <p className="text-sm text-muted-foreground">Revenue by channel · last 30 days</p>
+          {/* Revenue + channel mix */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div className="lg:col-span-2">
+              <RevenueChart series={data.series} rangeLabel={data.rangeLabel} />
             </div>
-          </CardHeader>
-          <CardContent>
-            <MarketplaceComparisonChart />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Top categories</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <CategoryChart />
-          </CardContent>
-        </Card>
-      </div>
+            <Card>
+              <CardHeader className="flex-row items-center justify-between">
+                <CardTitle>Channel mix</CardTitle>
+                <Link
+                  href="/marketplaces"
+                  className="text-xs text-primary hover:underline"
+                >
+                  View all
+                </Link>
+              </CardHeader>
+              <CardContent>
+                <ChannelDonut metrics={data.marketplaces} />
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Comparison + categories */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <Card className="lg:col-span-2">
+              <CardHeader className="flex-row items-center justify-between">
+                <div>
+                  <CardTitle>Marketplace comparison</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Revenue by channel · last {data.rangeLabel}
+                  </p>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <MarketplaceComparisonChart metrics={data.marketplaces} />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>Top categories</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CategoryChart categories={data.categories} />
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      )}
 
       {/* Smart insights */}
       <Card>
@@ -175,7 +247,10 @@ export default function DashboardPage() {
                     </span>
                   )}
                   {ins.action && (
-                    <button className="text-xs font-medium text-primary hover:underline">
+                    <button
+                      onClick={() => handleInsight(ins.action)}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
                       {ins.action} →
                     </button>
                   )}
@@ -276,43 +351,7 @@ export default function DashboardPage() {
 
         {/* Tasks + Low stock */}
         <div className="space-y-4">
-          <Card>
-            <CardHeader className="flex-row items-center justify-between">
-              <CardTitle>Tasks</CardTitle>
-              <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                {TASKS.filter((t) => !t.done).length} open
-              </span>
-            </CardHeader>
-            <CardContent className="space-y-1.5">
-              {TASKS.map((t) => (
-                <label
-                  key={t.id}
-                  className="flex cursor-pointer items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-secondary/50"
-                >
-                  <input
-                    type="checkbox"
-                    defaultChecked={t.done}
-                    className="size-4 accent-[var(--primary)]"
-                  />
-                  <span className={cn("flex-1 text-sm", t.done && "text-muted-foreground line-through")}>
-                    {t.title}
-                  </span>
-                  <span
-                    className={cn(
-                      "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-                      t.priority === "high"
-                        ? "bg-danger/12 text-danger"
-                        : t.priority === "medium"
-                        ? "bg-warning/12 text-warning"
-                        : "bg-secondary text-muted-foreground"
-                    )}
-                  >
-                    {t.due}
-                  </span>
-                </label>
-              ))}
-            </CardContent>
-          </Card>
+          <DashboardTasks />
 
           <Card>
             <CardHeader className="flex-row items-center justify-between">
@@ -366,6 +405,109 @@ export default function DashboardPage() {
           ))}
         </CardContent>
       </Card>
+
+      <ProductFormDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
+  );
+}
+
+/** Interactive tasks card — checkbox state persists to localStorage. */
+function DashboardTasks() {
+  const [done, setDone] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(TASKS.map((t) => [t.id, t.done]))
+  );
+
+  // Hydrate saved state after mount so SSR and first client render still match.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("pso_tasks");
+      if (raw) setDone((prev) => ({ ...prev, ...JSON.parse(raw) }));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  function toggle(id: string) {
+    setDone((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      try {
+        localStorage.setItem("pso_tasks", JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
+
+  const openCount = TASKS.filter((t) => !done[t.id]).length;
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between">
+        <CardTitle>Tasks</CardTitle>
+        <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {openCount} open
+        </span>
+      </CardHeader>
+      <CardContent className="space-y-1.5">
+        {TASKS.map((t) => (
+          <label
+            key={t.id}
+            className="flex cursor-pointer items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-secondary/50"
+          >
+            <input
+              type="checkbox"
+              checked={!!done[t.id]}
+              onChange={() => toggle(t.id)}
+              className="size-4 accent-[var(--primary)]"
+            />
+            <span className={cn("flex-1 text-sm", done[t.id] && "text-muted-foreground line-through")}>
+              {t.title}
+            </span>
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                t.priority === "high"
+                  ? "bg-danger/12 text-danger"
+                  : t.priority === "medium"
+                  ? "bg-warning/12 text-warning"
+                  : "bg-secondary text-muted-foreground"
+              )}
+            >
+              {t.due}
+            </span>
+          </label>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Skeleton shown briefly while the date-range metrics recompute. */
+function DashboardMetricsSkeleton() {
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-7 w-20" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-3 w-16" />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Skeleton className="h-[380px] w-full rounded-xl lg:col-span-2" />
+        <Skeleton className="h-[380px] w-full rounded-xl" />
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Skeleton className="h-[320px] w-full rounded-xl lg:col-span-2" />
+        <Skeleton className="h-[320px] w-full rounded-xl" />
+      </div>
+    </>
   );
 }

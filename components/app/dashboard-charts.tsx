@@ -12,11 +12,20 @@ import {
   YAxis,
 } from "recharts";
 import { ChartTooltip } from "./chart-tooltip";
-import { MARKETPLACE_METRICS, CATEGORY_METRICS } from "@/lib/mock/metrics";
+import {
+  MARKETPLACE_METRICS,
+  CATEGORY_METRICS,
+  MarketplaceMetric,
+  CategoryMetric,
+} from "@/lib/mock/metrics";
 import { formatCurrency } from "@/lib/format";
 
-export function MarketplaceComparisonChart() {
-  const data = MARKETPLACE_METRICS.map((m) => ({
+export function MarketplaceComparisonChart({
+  metrics = MARKETPLACE_METRICS,
+}: {
+  metrics?: MarketplaceMetric[];
+} = {}) {
+  const data = metrics.map((m) => ({
     name: m.name,
     revenue: m.revenue,
     color: m.color,
@@ -57,8 +66,12 @@ export function MarketplaceComparisonChart() {
   );
 }
 
-export function ChannelDonut() {
-  const data = MARKETPLACE_METRICS.map((m) => ({
+export function ChannelDonut({
+  metrics = MARKETPLACE_METRICS,
+}: {
+  metrics?: MarketplaceMetric[];
+} = {}) {
+  const data = metrics.map((m) => ({
     name: m.name,
     value: m.revenue,
     color: m.color,
@@ -85,7 +98,7 @@ export function ChannelDonut() {
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-lg font-semibold tabular-nums">7</span>
+          <span className="text-lg font-semibold tabular-nums">{data.length}</span>
           <span className="text-[10px] text-muted-foreground">channels</span>
         </div>
       </div>
@@ -104,8 +117,12 @@ export function ChannelDonut() {
   );
 }
 
-export function CategoryChart() {
-  const data = [...CATEGORY_METRICS].reverse();
+export function CategoryChart({
+  categories = CATEGORY_METRICS,
+}: {
+  categories?: CategoryMetric[];
+} = {}) {
+  const data = [...categories].reverse();
   const max = Math.max(...data.map((d) => d.revenue));
   return (
     <div className="space-y-3">
