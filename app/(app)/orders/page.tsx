@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ColumnDef } from "@tanstack/react-table";
-import { Download, ShoppingCart, Clock, Truck, RotateCcw, Flag, Plus } from "lucide-react";
+import { Download, ShoppingCart, Clock, Truck, RotateCcw, Flag, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/app/page-header";
 import { DataTable } from "@/components/app/data-table";
@@ -31,12 +31,36 @@ import { orderStore, useEntityList } from "@/lib/mock/store";
 
 const REF_NOW = "2026-07-23T14:30:00Z";
 
+/** `useSearchParams` needs a Suspense boundary to stay prerenderable. */
 export default function OrdersPage() {
+  return (
+    <Suspense fallback={null}>
+      <OrdersView />
+    </Suspense>
+  );
+}
+
+function OrdersView() {
   const router = useRouter();
   const orders = useEntityList(orderStore);
+  const searchParams = useSearchParams();
 
   const [marketplace, setMarketplace] = useState("all");
   const [status, setStatus] = useState("all");
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
+
+  // The copilot deep-links here with ?status=… and ?flagged=1 ("show me the
+  // flagged orders"), including when this page is already open, so the view
+  // follows the URL rather than only the initial mount.
+  const statusParam = searchParams.get("status");
+  const flaggedParam = searchParams.get("flagged");
+  useEffect(() => {
+    if (statusParam && statusParam in ORDER_STATUS_META) setStatus(statusParam);
+  }, [statusParam]);
+  useEffect(() => {
+    setFlaggedOnly(flaggedParam === "1");
+  }, [flaggedParam]);
+
   const [createOpen, setCreateOpen] = useState(false);
   const [draft, setDraft] = useState({
     customer: "",
@@ -51,9 +75,10 @@ export default function OrdersPage() {
       orders.filter(
         (o) =>
           (marketplace === "all" || o.marketplace === marketplace) &&
-          (status === "all" || o.status === status)
+          (status === "all" || o.status === status) &&
+          (!flaggedOnly || o.flagged)
       ),
-    [orders, marketplace, status]
+    [orders, marketplace, status, flaggedOnly]
   );
 
   const pending = orders.filter((o) => ["pending", "confirmed"].includes(o.status)).length;
@@ -243,20 +268,33 @@ export default function OrdersPage() {
         enableSelection
         onRowClick={(o) => router.push(`/orders/${o.id}`)}
         toolbar={
-          <Select
-            value={marketplace}
-            onChange={(e) => setMarketplace(e.target.value)}
-            className="w-auto"
-          >
-            <option value="all">All channels</option>
-            {MARKETPLACE_LIST.filter((m) =>
-              orders.some((o) => o.marketplace === m.id)
-            ).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </Select>
+          <>
+            <Select
+              value={marketplace}
+              onChange={(e) => setMarketplace(e.target.value)}
+              className="w-auto"
+            >
+              <option value="all">All channels</option>
+              {MARKETPLACE_LIST.filter((m) =>
+                orders.some((o) => o.marketplace === m.id)
+              ).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </Select>
+            {/* Flagged has no tab of its own, so surface it as a removable chip
+                — an invisible filter is worse than no filter. */}
+            {flaggedOnly && (
+              <button
+                onClick={() => setFlaggedOnly(false)}
+                className="flex items-center gap-1.5 rounded-md border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/15"
+              >
+                <Flag className="size-3" /> Flagged only
+                <X className="size-3" />
+              </button>
+            )}
+          </>
         }
         bulkActions={(rows) => (
           <>

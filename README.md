@@ -86,7 +86,8 @@ lib/
   mock/                 Deterministic, seeded mock data layer (+ demo fallback)
   db/                   CockroachDB pool + query helpers
   ai/                   bedrock.ts (Claude+Titan) · gemini.ts · s3.ts
-  agent/                loop.ts · tools.ts · memory.ts · retrieve.ts
+  agent/                loop.ts · tools.ts · ops.ts · actions.ts · memory.ts · retrieve.ts
+  copilot/              labels.ts (print-ready shipping-label sheets)
   config.ts constants.ts format.ts
 db/schema.sql           CockroachDB schema (VECTOR + C-SPANN indexes)
 scripts/                setup-db · seed · ingest-embeddings (tsx CLIs)
@@ -102,13 +103,20 @@ seeded mock, so the app always runs.
 
 ## Real AI backend — CockroachDB + AWS + Gemini (hackathon build)
 
-The AI Assistant is a real, tool-using agent with a **persistent CockroachDB memory
+The AI Assistant is a real, tool-using agent with a **CockroachDB memory
 layer**, executed on **AWS**, with a **Google Gemini** listing generator. Full
 design in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); submission mapping in
 [docs/SUBMISSION.md](docs/SUBMISSION.md).
 
+It is a **coworker, not a chat box**: alongside the analytics tools it can accept,
+pack, ship and cancel orders, download print-ready shipping labels, export CSVs,
+create orders, re-price and restock SKUs, and navigate you anywhere in the OS.
+Every write hits CockroachDB *and* updates the live UI, and every action leaves a
+receipt you can undo. It reaches you from any screen as a side dock or a
+draggable floating window (`Ctrl`/`⌘`+`J`).
+
 - **CockroachDB** — `agent_memory` + `catalog_embeddings` (`VECTOR(1024)`, C-SPANN
-  distributed vector index) for long-term memory and semantic RAG; plus the
+  distributed vector index) for memory recall and semantic RAG; plus the
   products/orders/marketplaces tables ([db/schema.sql](db/schema.sql)).
 - **Amazon Bedrock** — Claude (reasoning) + Titan Text Embeddings v2 (vectors).
 - **Google Gemini** — the deployed listing/marketing generator.
@@ -144,8 +152,11 @@ SELECT role, left(content, 60), created_at
 FROM agent_memory ORDER BY created_at DESC LIMIT 5;
 ```
 
-Each turn is persisted with its embedding; reload and ask a follow-up to see the
-copilot recall prior context.
+Each turn is persisted with its embedding. Recall is **scoped to the session id**,
+which is minted per window: ask a follow-up like "accept them" in the same window
+and the copilot resolves it against what was just said; reload, or hit **New chat**,
+and it starts clean. See *Memory lifetime* in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Roadmap (post-demo)
 

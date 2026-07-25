@@ -24,22 +24,43 @@ flowchart TD
 
 ## Request flow (one copilot turn)
 
-1. UI `POST /api/assistant { prompt, sessionId }` ([app/api/assistant/route.ts](../app/api/assistant/route.ts)).
-2. Embed the prompt with **Titan v2** and persist the user turn to
-   `agent_memory` ([lib/agent/memory.ts](../lib/agent/memory.ts)).
-3. Recall memory: semantic recall over `agent_memory` (C-SPANN) + recent session
-   turns → injected into the system prompt.
-4. **Bedrock Converse** tool-use loop ([lib/agent/loop.ts](../lib/agent/loop.ts)):
-   Claude picks tools that run **real SQL** over CockroachDB
-   ([lib/agent/tools.ts](../lib/agent/tools.ts)) — declining products, inventory
-   forecast, profit summary, pricing, semantic catalog search, and Gemini listing
-   generation.
-5. Tool results (incl. a UI widget) go back to Claude; it writes the final answer.
-6. Persist the assistant turn (embedded) to `agent_memory`; return
-   `{ text, widget, followups }` — the exact shape the existing UI renders.
+1. UI `POST /api/assistant { prompt, sessionId, history, path }`
+   ([app/api/assistant/route.ts](../app/api/assistant/route.ts)). `history` is the
+   operator's open-window transcript — the copilot's working memory.
+2. Embed the prompt and persist the user turn to `agent_memory`
+   ([lib/agent/memory.ts](../lib/agent/memory.ts)).
+3. Recall memory: semantic recall over `agent_memory` (C-SPANN), scoped to the
+   current session, for context that has fallen out of the replayed transcript.
+4. Tool-use loop ([lib/agent/loop.ts](../lib/agent/loop.ts)) over **real SQL** on
+   CockroachDB, in two families:
+   - *Read* ([lib/agent/tools.ts](../lib/agent/tools.ts)) — declining products,
+     inventory forecast, profit summary, pricing, order search/stats, semantic
+     catalog search, Gemini listing generation.
+   - *Act* ([lib/agent/ops.ts](../lib/agent/ops.ts)) — accept/pack/ship/cancel
+     orders, print labels, export CSVs, create orders, re-price, restock,
+     navigate. Each writes to CockroachDB **and** returns a `ClientAction`.
+5. Tool results (incl. a UI widget) go back to the model; it writes the answer.
+6. Stream `text` / `widget` / `action` events as they happen, persist the
+   assistant turn to `agent_memory`, and end with `done`.
 
-If CockroachDB or Bedrock aren't configured, the route falls back to the
+The browser applies each `ClientAction` ([lib/agent/actions.ts](../lib/agent/actions.ts))
+to the live OS surface — router, order/product stores, downloads, theme — so one
+turn both decides and does. See [components/copilot/](../components/copilot/).
+
+If CockroachDB or the LLM provider aren't configured, the route falls back to the
 deterministic mock `answer()` so the app always runs (demo-safe).
+
+## Memory lifetime
+
+Two layers, deliberately different in lifetime:
+
+| Layer | Lives in | Lasts |
+|---|---|---|
+| Working memory (the transcript replayed as conversation turns) | `CopilotProvider` React state | The operator's open window; a reload or **New chat** resets it |
+| Recall (embedded turns, C-SPANN vector search) | `agent_memory` in CockroachDB | Rows persist for audit, but recall is **scoped to the session id**, so a new window cannot reach an old one |
+
+That combination is what gives the demo a copilot that genuinely remembers the
+conversation you are having, and genuinely forgets it when you close the window.
 
 ## Hackathon A — CockroachDB tools used (need ≥2 → we use 3)
 

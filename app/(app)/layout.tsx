@@ -16,6 +16,8 @@ import {
   CommandPalette,
   useCommandPalette,
 } from "@/components/app/command-palette";
+import { CopilotProvider } from "@/components/copilot/copilot-provider";
+import { CopilotDock } from "@/components/copilot/copilot-dock";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { BrandLogo } from "@/components/brand";
 import { cn } from "@/lib/utils";
@@ -47,8 +49,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
+    <CopilotProvider>
+      <div className="flex h-screen overflow-hidden bg-background">
+        <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
 
       {/* Mobile sidebar */}
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -76,19 +79,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </SheetContent>
       </Sheet>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar
-          onMenuClick={() => setMobileOpen(true)}
-          onSearchClick={() => setOpen(true)}
-        />
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
-            {children}
-          </div>
-        </main>
-      </div>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Topbar
+            onMenuClick={() => setMobileOpen(true)}
+            onSearchClick={() => setOpen(true)}
+          />
+          <main className="flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
+              {children}
+            </div>
+          </main>
+        </div>
 
-      <CommandPalette open={open} onOpenChange={setOpen} />
-    </div>
+        {/* A flex sibling, so docking the copilot reflows the page instead of
+            covering the data being discussed. */}
+        <CopilotDock />
+
+        <CommandPalette open={open} onOpenChange={setOpen} />
+      </div>
+    </CopilotProvider>
   );
 }
