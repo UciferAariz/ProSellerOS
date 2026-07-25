@@ -86,7 +86,6 @@ you used in `.env.local`:
 ```
 AI_PROVIDER=gemini            # or "bedrock" — see "Choosing the LLM provider"
 COCKROACH_DSN=postgresql://...:26257/proselleros?sslmode=verify-full
-AWS_REGION=ap-southeast-2
 EMBED_DIMS=1024
 S3_BUCKET=YOUR-BUCKET
 GEMINI_USE_VERTEX=true        # bills to GCP credits; see "Vertex AI on Amplify"
@@ -103,6 +102,12 @@ BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
 Do **not** set `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` in Amplify — on the
 compute the SDK uses the execution role (next step). `isBedrockConfigured()`
 already treats the Amplify/Lambda execution env as "credentials present".
+
+**Amplify rejects any variable name starting with `AWS`** ("Environment
+variables cannot start with the reserved prefix AWS"), so `AWS_REGION` cannot be
+set here at all. The Lambda runtime supplies it, matching the app's own region.
+To pin it anyway, use the non-reserved `APP_AWS_REGION`, which
+[lib/config.ts](../lib/config.ts) checks first.
 
 ### Vertex AI on Amplify
 

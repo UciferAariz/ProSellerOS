@@ -13,7 +13,11 @@ export const config = {
   // Unset = auto-detect (Bedrock first, then Gemini). See activeProvider().
   aiProvider: (process.env.AI_PROVIDER ?? "").trim().toLowerCase(),
 
-  awsRegion: process.env.AWS_REGION ?? "us-east-1",
+  // Amplify rejects env vars starting with the reserved "AWS" prefix, so
+  // AWS_REGION cannot be set there by hand — the Lambda runtime supplies it.
+  // APP_AWS_REGION is the non-reserved override for hosts that don't.
+  awsRegion:
+    process.env.APP_AWS_REGION ?? process.env.AWS_REGION ?? "us-east-1",
   bedrockChatModelId:
     process.env.BEDROCK_CHAT_MODEL_ID ??
     "anthropic.claude-3-5-sonnet-20241022-v2:0",
