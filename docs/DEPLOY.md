@@ -89,7 +89,10 @@ COCKROACH_DSN=postgresql://...:26257/proselleros?sslmode=verify-full
 AWS_REGION=ap-southeast-2
 EMBED_DIMS=1024
 S3_BUCKET=YOUR-BUCKET
-GEMINI_API_KEY=...            # or GEMINI_USE_VERTEX=true + GOOGLE_CLOUD_PROJECT
+GEMINI_USE_VERTEX=true        # bills to GCP credits; see "Vertex AI on Amplify"
+GOOGLE_CLOUD_PROJECT=your-gcp-project
+GOOGLE_CLOUD_LOCATION=us-central1
+GCP_SA_KEY=<base64 of the service account JSON key>
 GEMINI_MODEL_ID=gemini-2.5-flash
 GEMINI_EMBED_MODEL_ID=gemini-embedding-001
 # Only needed when AI_PROVIDER=bedrock:
@@ -100,6 +103,40 @@ BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
 Do **not** set `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` in Amplify — on the
 compute the SDK uses the execution role (next step). `isBedrockConfigured()`
 already treats the Amplify/Lambda execution env as "credentials present".
+
+### Vertex AI on Amplify
+
+Locally, Vertex mode authenticates with Application Default Credentials written
+by `gcloud auth application-default login`. **Amplify's compute has no gcloud and
+no ADC file**, and the SDK's `GOOGLE_APPLICATION_CREDENTIALS` fallback wants a
+*file path*, which an env var cannot provide. Left unhandled, every Gemini call
+fails and [app/api/assistant/route.ts](../app/api/assistant/route.ts) quietly
+serves the mock answer instead — the page still looks fine, so check `source`.
+
+Supply a service account key inline instead:
+
+```bash
+PROJECT=your-gcp-project
+gcloud iam service-accounts create proselleros-vertex \
+  --display-name "ProSellerOS Vertex AI" --project "$PROJECT"
+
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member "serviceAccount:proselleros-vertex@$PROJECT.iam.gserviceaccount.com" \
+  --role roles/aiplatform.user
+
+gcloud iam service-accounts keys create sa-key.json \
+  --iam-account "proselleros-vertex@$PROJECT.iam.gserviceaccount.com"
+
+# Base64 so the value carries no quotes, newlines or commas.
+base64 -w0 sa-key.json      # macOS: base64 -i sa-key.json
+```
+
+Paste that string as `GCP_SA_KEY` in the Amplify console, then **delete
+`sa-key.json`** — it is an unexpiring private key and the repo must never see it.
+`roles/aiplatform.user` is the least privilege that can call Vertex models.
+
+Leave `GCP_SA_KEY` unset locally so your machine keeps using ADC. The parsing
+lives in [lib/ai/gemini.ts](../lib/ai/gemini.ts) and accepts raw JSON too.
 
 ---
 
@@ -161,6 +198,9 @@ rule on the bucket allowing `GET` from your Amplify domain.
 | `AccessDeniedException` on Bedrock | Compute role missing the policy from step 4, **or** model access not enabled in the Bedrock console for this region. |
 | `Operation not allowed` / model-id error | In ap-southeast-2 you must use the `apac.` cross-region **inference profile** id, not the raw model id. |
 | `Operation not allowed` on **every** Bedrock model, including Titan | Account-level zero quota, not a config error. Check with `aws service-quotas list-service-quotas --service-code bedrock --region ap-southeast-2`; if the on-demand requests-per-minute values are `0.0` and marked `Adjustable: False`, only AWS Support can raise them. Set `AI_PROVIDER=gemini` to run the full live agent meanwhile. |
+| `Could not load the default credentials` / 401 from Vertex, only when deployed | `GEMINI_USE_VERTEX=true` with no `GCP_SA_KEY`. Amplify has no ADC file — see [Vertex AI on Amplify](#vertex-ai-on-amplify). |
+| `GCP_SA_KEY is set but is not valid JSON or base64-encoded JSON` | The value was truncated or mangled when pasted. Re-copy the `base64 -w0` output as a single line. |
+| Vertex `403 Permission denied` on `aiplatform` | Service account is missing `roles/aiplatform.user`, or the Vertex AI API is not enabled: `gcloud services enable aiplatform.googleapis.com`. |
 | Gemini answers are empty but tools ran | Output budget consumed by thinking tokens. The adapter sets `thinkingConfig.thinkingBudget = 0` for this reason; if you raise it, also raise `maxTokens`. |
 | Gemini 400 on a tool call | A no-argument tool sent `properties: {}`. Gemini rejects empty OBJECT schemas; the adapter omits `parameters` for such tools ([lib/ai/gemini-agent.ts](../lib/ai/gemini-agent.ts)). |
 | Semantic search quality dropped after switching provider | Re-run `npm run db:ingest`. Vectors from different embedding models are not comparable. |

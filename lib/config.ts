@@ -34,6 +34,11 @@ export const config = {
   geminiUseVertex: (process.env.GEMINI_USE_VERTEX ?? "").toLowerCase() === "true",
   googleCloudProject: process.env.GOOGLE_CLOUD_PROJECT ?? "",
   googleCloudLocation: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1",
+  // Service-account key for Vertex AI on serverless compute (Amplify/Lambda),
+  // which has no ADC file on disk for the SDK to find. Raw JSON or base64 of it.
+  // Leave unset locally, where `gcloud auth application-default login` supplies
+  // ADC and the SDK's default credential lookup already works.
+  gcpServiceAccountKey: process.env.GCP_SA_KEY ?? "",
 };
 
 /** CockroachDB memory layer is available. */

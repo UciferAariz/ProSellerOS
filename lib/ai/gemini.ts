@@ -17,17 +17,46 @@ export interface ListingCopy {
   keywords: string[];
 }
 
+/**
+ * Inline Vertex credentials, for compute with no ADC file on disk.
+ *
+ * Locally this returns undefined and the SDK falls back to Application Default
+ * Credentials from `gcloud auth application-default login`. On Amplify/Lambda
+ * there is no such file and no gcloud, so `GCP_SA_KEY` carries the service
+ * account key instead — accepted as raw JSON, or base64 of it (base64 has no
+ * quotes, newlines or commas, so it survives console env-var fields intact).
+ */
+function vertexCredentials() {
+  const raw = config.gcpServiceAccountKey.trim();
+  if (!raw) return undefined;
+  const json = raw.startsWith("{")
+    ? raw
+    : Buffer.from(raw, "base64").toString("utf8");
+  try {
+    return { credentials: JSON.parse(json) };
+  } catch {
+    // Don't fall back to ADC that isn't there — a malformed key would surface
+    // much later as a generic auth failure, and the API route swallows those
+    // into a mock answer. Fail here, where the message names the cause.
+    throw new Error(
+      "GCP_SA_KEY is set but is not valid JSON or base64-encoded JSON.",
+    );
+  }
+}
+
 let genai: GoogleGenAI | null = null;
 /** Shared client, reused by the agent adapter in `lib/ai/gemini-agent.ts`. */
 export function getClient(): GoogleGenAI {
   if (!genai) {
-    // Vertex AI mode uses Application Default Credentials (ADC) and bills to the
-    // Google Cloud project; API-key mode uses the Gemini Developer API. Same SDK.
+    // Vertex AI mode bills to the Google Cloud project and authenticates with
+    // ADC, or the inline service-account key above when ADC is unavailable;
+    // API-key mode uses the Gemini Developer API. Same SDK either way.
     genai = config.geminiUseVertex
       ? new GoogleGenAI({
           vertexai: true,
           project: config.googleCloudProject,
           location: config.googleCloudLocation,
+          googleAuthOptions: vertexCredentials(),
         })
       : new GoogleGenAI({ apiKey: config.geminiApiKey });
   }
