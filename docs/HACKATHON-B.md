@@ -21,8 +21,12 @@ ProSellerOS replaces that with one conversational copilot:
 - **Gemini writes the storefront.** "Generate a listing for my bestseller" calls
   **Gemini** to produce SEO-optimized, benefit-led titles/bullets/keywords ready
   to publish across channels.
-- **It remembers.** A persistent memory layer recalls past context, so the copilot
-  gets more useful the more the seller uses it.
+- **It remembers the session.** The copilot keeps the working conversation for as
+  long as the seller's window is open, so "accept them, then print their labels"
+  resolves against what was just discussed — and forgets it on close.
+- **It does the work.** Beyond answering, it accepts and ships orders, downloads
+  print-ready labels, re-prices SKUs, exports reports, and navigates the seller
+  straight to the screen in question — each action leaving an undoable receipt.
 
 The AI is the product: it turns raw commerce data into decisions and published
 content a solo seller could not produce at that speed.

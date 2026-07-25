@@ -1,23 +1,55 @@
+import type { ClientAction } from "@/lib/agent/actions";
 import { PRODUCTS } from "./products";
 import { MARKETPLACE_METRICS } from "./metrics";
+import { ORDERS, OrderStatus } from "./orders";
 
 export type AssistantWidget =
   | { kind: "falling-products"; items: { name: string; trend: number; revenue: number }[] }
-  | { kind: "forecast"; series: { label: string; actual?: number; forecast?: number }[]; sku: string }
+  | {
+      kind: "forecast";
+      series: { label: string; actual?: number; forecast?: number }[];
+      sku: string;
+      daysToStockout?: number;
+    }
   | { kind: "profit"; total: number; margin: number; breakdown: { name: string; value: number; color: string }[] }
   | { kind: "pricing"; items: { name: string; current: number; suggested: number; uplift: number }[] }
-  | { kind: "listing"; title: string; bullets: string[]; keywords: string[] };
+  | { kind: "listing"; title: string; bullets: string[]; keywords: string[] }
+  | {
+      kind: "orders";
+      title: string;
+      total: number;
+      rows: {
+        id: string;
+        number: string;
+        customer: string;
+        city: string;
+        marketplace: string;
+        status: OrderStatus;
+        payment: "prepaid" | "cod";
+        total: number;
+      }[];
+    }
+  | {
+      kind: "order-stats";
+      total: number;
+      revenue: number;
+      byStatus: { label: string; count: number }[];
+      byPayment: { label: string; count: number }[];
+    };
 
 export interface AssistantReply {
   text: string;
   widget?: AssistantWidget;
   followups?: string[];
+  /** Things the copilot did in the portal, for the browser to apply. */
+  actions?: ClientAction[];
 }
 
 export const SUGGESTED_PROMPTS = [
-  "Show products with falling sales",
-  "Predict inventory for next 30 days",
-  "Summarize this month's profit",
+  "How many orders are COD?",
+  "Accept all pending Amazon orders",
+  "Download labels for confirmed orders",
+  "Take me to the flagged orders",
   "Find pricing opportunities",
   "Generate a listing for my bestseller",
 ];
@@ -112,8 +144,80 @@ export function answer(prompt: string): AssistantReply {
     };
   }
 
+  // ── Offline equivalents of the operator tools ─────────────────────────────
+  // These run off the same deterministic arrays the live agent's tables were
+  // seeded from, so the demo still answers and still navigates with the backend
+  // unreachable. Writes are deliberately left to the live path only.
+
+  if (q.includes("cod") || q.includes("cash on delivery") || q.includes("how many order")) {
+    const cod = ORDERS.filter((o) => o.payment === "cod");
+    const revenue = Math.round(ORDERS.reduce((s, o) => s + o.total, 0));
+    const byStatus = Object.entries(
+      ORDERS.reduce<Record<string, number>>((acc, o) => {
+        acc[o.status] = (acc[o.status] ?? 0) + 1;
+        return acc;
+      }, {}),
+    )
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+    return {
+      text: `${cod.length} of your ${ORDERS.length} orders are cash on delivery — ${Math.round((cod.length / ORDERS.length) * 100)}% of the queue, worth $${Math.round(cod.reduce((s, o) => s + o.total, 0)).toLocaleString()}.`,
+      widget: {
+        kind: "order-stats",
+        total: ORDERS.length,
+        revenue,
+        byStatus,
+        byPayment: [
+          { label: "cod", count: cod.length },
+          { label: "prepaid", count: ORDERS.length - cod.length },
+        ],
+      },
+      followups: ["Show the pending COD orders", "Accept all pending orders"],
+    };
+  }
+
+  const NAV: { match: string[]; path: string; label: string }[] = [
+    { match: ["dashboard", "overview"], path: "/dashboard", label: "the Dashboard" },
+    { match: ["product", "catalog"], path: "/products", label: "Products" },
+    { match: ["order"], path: "/orders", label: "Orders" },
+    { match: ["marketplace", "channel"], path: "/marketplaces", label: "Marketplaces" },
+  ];
+  if (/\b(go to|open|take me|navigate|show me the)\b/.test(q)) {
+    const hit = NAV.find((n) => n.match.some((m) => q.includes(m)));
+    if (hit) {
+      return {
+        text: `Opening ${hit.label}.`,
+        actions: [{ kind: "navigate", path: hit.path, label: hit.label }],
+      };
+    }
+  }
+
+  if (q.includes("label")) {
+    const ready = ORDERS.filter((o) => o.status === "confirmed" || o.status === "packed").slice(0, 20);
+    return {
+      text: `Prepared ${ready.length} print-ready shipping labels for your accepted orders. The sheet is downloading now.`,
+      actions: [
+        {
+          kind: "labels",
+          orders: ready.map((o) => ({
+            id: o.id,
+            number: o.number,
+            customer: o.customer,
+            city: o.city,
+            marketplace: o.marketplace,
+            courier: o.courier === "—" ? "Shiprocket" : o.courier,
+            tracking: o.tracking === "—" ? `TRK${o.number.replace(/\D/g, "").padStart(9, "4")}` : o.tracking,
+            itemCount: o.itemCount,
+            total: o.total,
+          })),
+        },
+      ],
+      followups: ["Mark them shipped", "Export the order list"],
+    };
+  }
+
   return {
-    text: "I can help with sales trends, inventory forecasting, profit summaries, pricing optimization, and generating listings. Try one of the suggestions below, or ask me anything about your business.",
+    text: "I can run your storefront with you — accept and ship orders, print labels, re-price SKUs, export data, pull up any screen, and analyze sales, inventory, and profit. Try one of the suggestions below, or just tell me what to do.",
     followups: SUGGESTED_PROMPTS.slice(0, 3),
   };
 }

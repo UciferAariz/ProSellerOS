@@ -12,10 +12,15 @@ import { generateListingCopy } from "@/lib/ai/gemini";
 import { putArtifact } from "@/lib/ai/s3";
 import { searchCatalog } from "@/lib/agent/retrieve";
 import type { AssistantWidget } from "@/lib/mock/assistant";
+import type { ClientAction } from "@/lib/agent/actions";
 
 export interface ToolResult {
+  /** Natural-language result fed back to the model so it can compose the answer. */
   summary: string;
+  /** Rich UI the assistant renders under its answer. */
   widget?: AssistantWidget;
+  /** Something for the browser to actually do. See lib/agent/actions.ts. */
+  action?: ClientAction;
 }
 
 export async function decliningProducts(sellerId: string): Promise<ToolResult> {
@@ -62,7 +67,7 @@ export async function inventoryForecast(
   const daysToStockout = Math.max(1, Math.round((p.stock / weekly) * 7));
   return {
     summary: `"${p.name}" sells ~${weekly}/week; at current velocity it breaches safety stock in ~${daysToStockout} days.`,
-    widget: { kind: "forecast", series, sku: p.name },
+    widget: { kind: "forecast", series, sku: p.name, daysToStockout },
   };
 }
 
