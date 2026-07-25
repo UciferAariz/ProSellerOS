@@ -39,12 +39,12 @@ const MAIN: NavItem[] = [
 ];
 
 const SECONDARY: NavItem[] = [
-  { label: "Inventory", href: "#", icon: Boxes, soon: true },
-  { label: "Customers", href: "#", icon: Users, soon: true },
-  { label: "Finance", href: "#", icon: Wallet, soon: true },
-  { label: "Marketing", href: "#", icon: Megaphone, soon: true },
-  { label: "Analytics", href: "#", icon: BarChart3, soon: true },
-  { label: "Automation", href: "#", icon: Workflow, soon: true },
+  { label: "Inventory", href: "/inventory", icon: Boxes },
+  { label: "Customers", href: "/customers", icon: Users },
+  { label: "Finance", href: "/finance", icon: Wallet },
+  { label: "Marketing", href: "/marketing", icon: Megaphone },
+  { label: "Analytics", href: "/analytics", icon: BarChart3 },
+  { label: "Automation", href: "/automation", icon: Workflow },
 ];
 
 export function Sidebar({

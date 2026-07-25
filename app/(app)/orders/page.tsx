@@ -48,18 +48,24 @@ function OrdersView() {
   const [marketplace, setMarketplace] = useState("all");
   const [status, setStatus] = useState("all");
   const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const [customer, setCustomer] = useState("");
 
   // The copilot deep-links here with ?status=… and ?flagged=1 ("show me the
-  // flagged orders"), including when this page is already open, so the view
-  // follows the URL rather than only the initial mount.
+  // flagged orders"), and Customers links in with ?customer=…, including when
+  // this page is already open — so the view follows the URL rather than only
+  // the initial mount.
   const statusParam = searchParams.get("status");
   const flaggedParam = searchParams.get("flagged");
+  const customerParam = searchParams.get("customer");
   useEffect(() => {
     if (statusParam && statusParam in ORDER_STATUS_META) setStatus(statusParam);
   }, [statusParam]);
   useEffect(() => {
     setFlaggedOnly(flaggedParam === "1");
   }, [flaggedParam]);
+  useEffect(() => {
+    setCustomer(customerParam ?? "");
+  }, [customerParam]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [draft, setDraft] = useState({
@@ -76,9 +82,10 @@ function OrdersView() {
         (o) =>
           (marketplace === "all" || o.marketplace === marketplace) &&
           (status === "all" || o.status === status) &&
-          (!flaggedOnly || o.flagged)
+          (!flaggedOnly || o.flagged) &&
+          (!customer || o.customer.toLowerCase() === customer.toLowerCase())
       ),
-    [orders, marketplace, status, flaggedOnly]
+    [orders, marketplace, status, flaggedOnly, customer]
   );
 
   const pending = orders.filter((o) => ["pending", "confirmed"].includes(o.status)).length;
@@ -291,6 +298,15 @@ function OrdersView() {
                 className="flex items-center gap-1.5 rounded-md border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/15"
               >
                 <Flag className="size-3" /> Flagged only
+                <X className="size-3" />
+              </button>
+            )}
+            {customer && (
+              <button
+                onClick={() => setCustomer("")}
+                className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
+              >
+                {customer}
                 <X className="size-3" />
               </button>
             )}
