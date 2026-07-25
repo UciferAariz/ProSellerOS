@@ -99,7 +99,7 @@ S3_BUCKET=YOUR-BUCKET
 GEMINI_USE_VERTEX=true        # bills to GCP credits; see "Vertex AI on Amplify"
 GOOGLE_CLOUD_PROJECT=your-gcp-project
 GOOGLE_CLOUD_LOCATION=us-central1
-GCP_SA_KEY=<base64 of the service account JSON key>
+GCP_SA_KEY=<base64 of wif-config.json (preferred) or a service account key>
 GEMINI_MODEL_ID=gemini-2.5-flash
 GEMINI_EMBED_MODEL_ID=gemini-embedding-001
 # Only needed when AI_PROVIDER=bedrock:
@@ -126,10 +126,25 @@ no ADC file**, and the SDK's `GOOGLE_APPLICATION_CREDENTIALS` fallback wants a
 fails and [app/api/assistant/route.ts](../app/api/assistant/route.ts) quietly
 serves the mock answer instead — the page still looks fine, so check `source`.
 
-Supply a service account key inline instead:
+Supply credentials through `GCP_SA_KEY` instead. It accepts either a service
+account key **or** a Workload Identity Federation config — both are JSON, and
+[lib/ai/gemini.ts](../lib/ai/gemini.ts) passes either to the SDK unchanged.
+
+**Prefer federation.** It issues no long-lived key at all: the Amplify compute
+role impersonates the service account directly, so the value you paste into the
+console is configuration, not a credential. Many organizations also enforce
+`constraints/iam.disableServiceAccountKeyCreation`, which makes
+`gcloud iam service-accounts keys create` fail outright with `FAILED_PRECONDITION`
+— on such a project federation is the only route.
 
 ```bash
-PROJECT=your-gcp-project
+PROJECT=your-gcp-project          # e.g. project-bccad6de-f34b-4275-91a
+PROJECT_NUMBER=000000000000       # gcloud projects describe "$PROJECT" --format="value(projectNumber)"
+AWS_ACCOUNT=000000000000          # aws sts get-caller-identity --query Account --output text
+ROLE=AmplifySSRLoggingRole-xxxx   # Amplify console -> App settings -> IAM roles -> compute role
+
+gcloud services enable sts.googleapis.com aiplatform.googleapis.com --project "$PROJECT"
+
 gcloud iam service-accounts create proselleros-vertex \
   --display-name "ProSellerOS Vertex AI" --project "$PROJECT"
 
@@ -137,27 +152,60 @@ gcloud projects add-iam-policy-binding "$PROJECT" \
   --member "serviceAccount:proselleros-vertex@$PROJECT.iam.gserviceaccount.com" \
   --role roles/aiplatform.user
 
-gcloud iam service-accounts keys create sa-key.json \
-  --iam-account "proselleros-vertex@$PROJECT.iam.gserviceaccount.com"
+gcloud iam workload-identity-pools create aws-pool --location=global --project "$PROJECT"
+
+gcloud iam workload-identity-pools providers create-aws aws-provider \
+  --location=global --workload-identity-pool=aws-pool \
+  --account-id="$AWS_ACCOUNT" --project "$PROJECT"
+
+# Amplify role ARNs exceed the 127-byte cap on google.subject, so map the
+# subject to just the role name. Without this the token exchange is rejected
+# with "The size of mapped attribute google.subject exceeds the 127 bytes limit".
+gcloud iam workload-identity-pools providers update-aws aws-provider \
+  --location=global --workload-identity-pool=aws-pool --project "$PROJECT" \
+  --attribute-mapping="google.subject=assertion.arn.extract('assumed-role/{role_name}/')"
+
+gcloud iam service-accounts add-iam-policy-binding \
+  "proselleros-vertex@$PROJECT.iam.gserviceaccount.com" \
+  --role=roles/iam.workloadIdentityUser --project "$PROJECT" \
+  --member="principal://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/aws-pool/subject/$ROLE"
+
+gcloud iam workload-identity-pools create-cred-config \
+  "projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/aws-pool/providers/aws-provider" \
+  --service-account="proselleros-vertex@$PROJECT.iam.gserviceaccount.com" \
+  --aws --output-file=wif-config.json
 
 # Base64 so the value carries no quotes, newlines or commas.
-base64 -w0 sa-key.json      # macOS: base64 -i sa-key.json
+base64 -w0 wif-config.json      # macOS: base64 -i wif-config.json
 ```
+
+Federation works on Amplify because its compute exposes `AWS_ACCESS_KEY_ID` and
+`AWS_SESSION_TOKEN`, which is where google-auth-library looks before falling
+back to IMDS (absent on Lambda). `/api/health` reports this as `awsCredsInEnv`.
+
+The binding is the slowest part to take effect — allow a few minutes before
+concluding it failed. Until it propagates the error is
+`Permission 'iam.serviceAccounts.getAccessToken' denied`, which reads like a
+misconfiguration but usually just means "not yet".
 
 On Windows, `base64` does not exist — use PowerShell instead:
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("$PWD\sa-key.json")) | Set-Clipboard
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$PWD\wif-config.json")) | Set-Clipboard
 (Get-Clipboard).Length   # sanity check: expect ~900-3000 chars, never 0
 ```
 
 `$PWD` is required, not decoration: PowerShell's `cd` does not change the .NET
-process working directory, so a bare `"sa-key.json"` resolves against the
+process working directory, so a bare `"wif-config.json"` resolves against the
 directory the shell was launched from and throws `FileNotFoundException`.
 
-Paste that string as `GCP_SA_KEY` in the Amplify console, then **delete
-`sa-key.json`** — it is an unexpiring private key and the repo must never see it.
-`roles/aiplatform.user` is the least privilege that can call Vertex models.
+Paste that string as `GCP_SA_KEY` in the Amplify console. `roles/aiplatform.user`
+is the least privilege that can call Vertex models.
+
+`wif-config.json` holds no secret — it names the pool, provider and service
+account, and the actual credential is minted per request from the compute role.
+If you used a service account key instead, that file **is** an unexpiring
+private key: delete it immediately and keep it out of the repo.
 
 Leave `GCP_SA_KEY` unset locally so your machine keeps using ADC. The parsing
 lives in [lib/ai/gemini.ts](../lib/ai/gemini.ts) and accepts raw JSON too.
@@ -196,17 +244,25 @@ rule on the bucket allowing `GET` from your Amplify domain.
 ## 5. Deploy & verify
 
 1. Trigger a build (push to `main`, or **Redeploy this version**).
-2. Open the Amplify URL -> **/assistant**.
-3. Ask *"Which products are declining and why?"* You should get a streamed answer
+2. Check every backing service at once — **do this first**, it names the broken
+   one instead of leaving you to guess from a mock answer:
+   ```bash
+   curl -s https://YOUR-APP.amplifyapp.com/api/health
+   ```
+   Want `provider:"gemini"`, `vertex:true`, and `ok:true` for `db`, `llm`, `s3`.
+   [app/api/health/route.ts](../app/api/health/route.ts) reports each subsystem's
+   real error; secrets are redacted from the output.
+3. Open the Amplify URL -> **/assistant**.
+4. Ask *"Which products are declining and why?"* You should get a streamed answer
    plus the declining-products chart.
-4. Confirm it is **live**, not mock: the `/api/assistant` stream ends with
+5. Confirm it is **live**, not mock: the `/api/assistant` stream ends with
    `{"type":"done",...,"source":"live"}`. Check with:
    ```bash
    curl -sN -X POST https://YOUR-APP.amplifyapp.com/api/assistant \
      -H "Content-Type: application/json" \
      -d '{"prompt":"declining products","sessionId":"deploy-check"}' | tail -1
    ```
-5. Confirm CockroachDB memory persisted the turn:
+6. Confirm CockroachDB memory persisted the turn:
    ```sql
    SELECT role, left(content,60), created_at
    FROM agent_memory ORDER BY created_at DESC LIMIT 5;
@@ -224,6 +280,10 @@ rule on the bucket allowing `GET` from your Amplify domain.
 | `Operation not allowed` on **every** Bedrock model, including Titan | Account-level zero quota, not a config error. Check with `aws service-quotas list-service-quotas --service-code bedrock --region ap-southeast-2`; if the on-demand requests-per-minute values are `0.0` and marked `Adjustable: False`, only AWS Support can raise them. Set `AI_PROVIDER=gemini` to run the full live agent meanwhile. |
 | `Could not load the default credentials` / 401 from Vertex, only when deployed | `GEMINI_USE_VERTEX=true` with no `GCP_SA_KEY`. Amplify has no ADC file — see [Vertex AI on Amplify](#vertex-ai-on-amplify). |
 | `GCP_SA_KEY is set but is not valid JSON or base64-encoded JSON` | The value was truncated or mangled when pasted. Re-copy the `base64 -w0` output as a single line. |
+| `The size of mapped attribute google.subject exceeds the 127 bytes limit` | Amplify role ARNs are too long for the default AWS mapping. Remap the subject to the role name — see [Vertex AI on Amplify](#vertex-ai-on-amplify). |
+| `Permission 'iam.serviceAccounts.getAccessToken' denied` | The `workloadIdentityUser` binding does not match the mapped subject, or has not propagated yet. Confirm with `gcloud iam service-accounts get-iam-policy`, then wait a few minutes. |
+| `FAILED_PRECONDITION: Key creation is not allowed on this service account` | Org policy `constraints/iam.disableServiceAccountKeyCreation`. Don't fight it — use Workload Identity Federation, which needs no key. |
+| Everything mocks and `/api/health` shows `provider` wrong, `COCKROACH_DSN not set` | Console env vars never reach the Next.js server runtime. [amplify.yml](../amplify.yml) must write them to `.env.production` during the build. |
 | Vertex `403 Permission denied` on `aiplatform` | Service account is missing `roles/aiplatform.user`, or the Vertex AI API is not enabled: `gcloud services enable aiplatform.googleapis.com`. |
 | Gemini answers are empty but tools ran | Output budget consumed by thinking tokens. The adapter sets `thinkingConfig.thinkingBudget = 0` for this reason; if you raise it, also raise `maxTokens`. |
 | Gemini 400 on a tool call | A no-argument tool sent `properties: {}`. Gemini rejects empty OBJECT schemas; the adapter omits `parameters` for such tools ([lib/ai/gemini-agent.ts](../lib/ai/gemini-agent.ts)). |
